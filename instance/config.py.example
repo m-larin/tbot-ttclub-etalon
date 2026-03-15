@@ -1,8 +1,14 @@
-SALES_GROUP_CHAT_ID = 0000000
-ACCESS_TOCKEN = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
-LOG_FILE = '/var/log/btlab-bot.log'
-DATABASE_NAME = 'telegram_bot'
-DATABASE_USER = 'telegram_bot'
-DATABASE_PASSWORD = 'telegram_bot'
-DATABASE_HOST = 'localhost'
-DATABASE_PORT = '5432'
+# Токен доступа
+ACCESS_TOKEN = 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
+# ID группы для отправки уведомлений (замените на свой)
+GROUP_CHAT_ID = -000000000000000  # Замените на реальный ID группы
+# ID администратора (замените на свой)
+ADMIN_USER_IDS = [
+    00000000000000
+]
+# Лог файл
+LOG_FILE = './log/bot.log'
+# Файл базы данных
+DB_FILE='./database/tournaments.db'
+# Таймаут
+POLLING_TIMEOUT = 120
