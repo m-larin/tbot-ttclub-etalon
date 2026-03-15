@@ -1,0 +1,1059 @@
+import telebot
+from telebot import types
+import sqlite3
+from datetime import datetime
+from typing import Dict, List, Optional
+from contextlib import contextmanager
+import logging
+import time
+import signal
+import json
+from instance.config import (
+    ACCESS_TOKEN,
+    GROUP_CHAT_ID,
+    ADMIN_USER_IDS,
+    LOG_FILE,
+    DB_FILE,
+    POLLING_TIMEOUT
+)
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(LOG_FILE, encoding='utf-8')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Состояния для регистрации турниров и сбора данных
+ADDING_TOURNAMENT_NAME = 1
+ADDING_TOURNAMENT_DATE = 2
+ASKING_FIRST_NAME = 3
+ASKING_LAST_NAME = 4
+ASKING_PATRONYMIC = 5
+ASKING_BIRTH_YEAR = 6
+ASKING_CITY = 7
+
+# Хранилище состояний и данных пользователей
+user_states = {}
+user_data = {}
+temp_registration = {}  # Временное хранение данных регистрации
+
+
+# Класс для работы с базой данных
+class Database:
+    def __init__(self, db_name: str = DB_FILE):
+        self.db_name = db_name
+        self.init_db()
+
+    @contextmanager
+    def get_connection(self):
+        conn = sqlite3.connect(self.db_name)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def init_db(self):
+        """Инициализация таблиц в базе данных"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Таблица профилей пользователей
+            cursor.execute('''
+                           CREATE TABLE IF NOT EXISTS user_profiles
+                           (
+                               user_id
+                               INTEGER
+                               PRIMARY
+                               KEY,
+                               telegram_username
+                               TEXT,
+                               telegram_first_name
+                               TEXT,
+                               telegram_last_name
+                               TEXT,
+                               first_name
+                               TEXT
+                               NOT
+                               NULL,
+                               last_name
+                               TEXT
+                               NOT
+                               NULL,
+                               patronymic
+                               TEXT,
+                               birth_year
+                               INTEGER
+                               NOT
+                               NULL,
+                               city
+                               TEXT
+                               NOT
+                               NULL,
+                               registered_at
+                               TEXT
+                               NOT
+                               NULL,
+                               updated_at
+                               TEXT
+                               NOT
+                               NULL
+                           )
+                           ''')
+
+            # Таблица турниров
+            cursor.execute('''
+                           CREATE TABLE IF NOT EXISTS tournaments
+                           (
+                               id
+                               INTEGER
+                               PRIMARY
+                               KEY
+                               AUTOINCREMENT,
+                               name
+                               TEXT
+                               NOT
+                               NULL,
+                               date
+                               TEXT
+                               NOT
+                               NULL,
+                               created_at
+                               TEXT
+                               NOT
+                               NULL,
+                               created_by
+                               INTEGER
+                               NOT
+                               NULL,
+                               is_active
+                               INTEGER
+                               DEFAULT
+                               1
+                           )
+                           ''')
+
+            # Таблица участников
+            cursor.execute('''
+                           CREATE TABLE IF NOT EXISTS participants
+                           (
+                               id
+                               INTEGER
+                               PRIMARY
+                               KEY
+                               AUTOINCREMENT,
+                               tournament_id
+                               INTEGER
+                               NOT
+                               NULL,
+                               user_id
+                               INTEGER
+                               NOT
+                               NULL,
+                               registered_at
+                               TEXT
+                               NOT
+                               NULL,
+                               FOREIGN
+                               KEY
+                           (
+                               tournament_id
+                           ) REFERENCES tournaments
+                           (
+                               id
+                           ) ON DELETE CASCADE,
+                               FOREIGN KEY
+                           (
+                               user_id
+                           ) REFERENCES user_profiles
+                           (
+                               user_id
+                           )
+                             ON DELETE CASCADE,
+                               UNIQUE
+                           (
+                               tournament_id,
+                               user_id
+                           )
+                               )
+                           ''')
+
+            conn.commit()
+
+    # Методы для работы с профилями пользователей
+    def get_user_profile(self, user_id: int) -> Optional[Dict]:
+        """Получение профиля пользователя"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM user_profiles WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def save_user_profile(self, user_id: int, telegram_username: str, telegram_first_name: str,
+                          telegram_last_name: str, first_name: str, last_name: str,
+                          patronymic: str, birth_year: int, city: str) -> bool:
+        """Сохранение или обновление профиля пользователя"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                now = datetime.now().isoformat()
+
+                # Проверяем, существует ли уже профиль
+                existing = self.get_user_profile(user_id)
+
+                if existing:
+                    # Обновляем существующий профиль
+                    cursor.execute('''
+                                   UPDATE user_profiles
+                                   SET telegram_username   = ?,
+                                       telegram_first_name = ?,
+                                       telegram_last_name  = ?,
+                                       first_name          = ?,
+                                       last_name           = ?,
+                                       patronymic          = ?,
+                                       birth_year          = ?,
+                                       city                = ?,
+                                       updated_at          = ?
+                                   WHERE user_id = ?
+                                   ''', (telegram_username, telegram_first_name, telegram_last_name,
+                                         first_name, last_name, patronymic, birth_year, city, now, user_id))
+                else:
+                    # Создаем новый профиль
+                    cursor.execute('''
+                                   INSERT INTO user_profiles
+                                   (user_id, telegram_username, telegram_first_name, telegram_last_name,
+                                    first_name, last_name, patronymic, birth_year, city, registered_at, updated_at)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   ''', (user_id, telegram_username, telegram_first_name, telegram_last_name,
+                                         first_name, last_name, patronymic, birth_year, city, now, now))
+
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении профиля: {e}")
+            return False
+
+    # Методы для работы с турнирами
+    def add_tournament(self, name: str, date: str, created_by: int) -> int:
+        """Добавление нового турнира"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO tournaments (name, date, created_at, created_by) VALUES (?, ?, ?, ?)",
+                (name, date, datetime.now().isoformat(), created_by)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_tournaments(self, only_active: bool = True) -> List[Dict]:
+        """Получение списка турниров"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if only_active:
+                cursor.execute(
+                    "SELECT * FROM tournaments WHERE is_active = 1 AND date >= date('now') ORDER BY date"
+                )
+            else:
+                cursor.execute("SELECT * FROM tournaments ORDER BY date")
+
+            tournaments = []
+            for row in cursor.fetchall():
+                tournaments.append(dict(row))
+            return tournaments
+
+    def get_tournament(self, tournament_id: int) -> Optional[Dict]:
+        """Получение информации о турнире"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tournaments WHERE id = ?", (tournament_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def delete_tournament(self, tournament_id: int):
+        """Удаление турнира (мягкое удаление)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE tournaments SET is_active = 0 WHERE id = ?",
+                (tournament_id,)
+            )
+            conn.commit()
+
+    def register_participant(self, tournament_id: int, user_id: int) -> bool:
+        """Регистрация участника на турнир"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO participants (tournament_id, user_id, registered_at) VALUES (?, ?, ?)",
+                    (tournament_id, user_id, datetime.now().isoformat())
+                )
+                conn.commit()
+                return True
+        except sqlite3.IntegrityError:
+            return False  # Участник уже зарегистрирован
+
+    def unregister_participant(self, tournament_id: int, user_id: int) -> bool:
+        """Отмена регистрации участника"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM participants WHERE tournament_id = ? AND user_id = ?",
+                (tournament_id, user_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_participants(self, tournament_id: int) -> List[Dict]:
+        """Получение списка участников турнира с полной информацией"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                           SELECT p.*,
+                                  u.first_name,
+                                  u.last_name,
+                                  u.patronymic,
+                                  u.birth_year,
+                                  u.city,
+                                  u.telegram_username,
+                                  u.telegram_first_name,
+                                  u.telegram_last_name
+                           FROM participants p
+                                    JOIN user_profiles u ON p.user_id = u.user_id
+                           WHERE p.tournament_id = ?
+                           ORDER BY p.registered_at
+                           ''', (tournament_id,))
+
+            participants = []
+            for row in cursor.fetchall():
+                participants.append(dict(row))
+            return participants
+
+    def get_user_registrations(self, user_id: int) -> List[Dict]:
+        """Получение списка турниров, на которые зарегистрирован пользователь"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                           SELECT t.*, p.registered_at as reg_date
+                           FROM tournaments t
+                                    JOIN participants p ON t.id = p.tournament_id
+                           WHERE p.user_id = ?
+                             AND t.is_active = 1
+                             AND t.date >= date ('now')
+                           ORDER BY t.date
+                           ''', (user_id,))
+
+            registrations = []
+            for row in cursor.fetchall():
+                registrations.append(dict(row))
+            return registrations
+
+    def get_registration_count(self, tournament_id: int) -> int:
+        """Получение количества участников на турнире"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) as count FROM participants WHERE tournament_id = ?",
+                (tournament_id,)
+            )
+            row = cursor.fetchone()
+            return row['count'] if row else 0
+
+
+# Инициализация бота и базы данных
+bot = telebot.TeleBot(ACCESS_TOKEN)
+db = Database()
+
+
+# Вспомогательная функция для получения информации о пользователе
+def get_user_display_name(user) -> str:
+    """Получение отображаемого имени пользователя"""
+    if user.username:
+        return f"@{user.username}"
+    elif user.first_name or user.last_name:
+        return f"{user.first_name or ''} {user.last_name or ''}".strip()
+    else:
+        return f"ID: {user.id}"
+
+
+def get_user_full_info(user_id: int) -> str:
+    """Получение полной информации о пользователе из базы"""
+    profile = db.get_user_profile(user_id)
+    if profile:
+        return (f"{profile['last_name']} {profile['first_name']} {profile['patronymic'] or ''} "
+                f"({profile['birth_year']} г.р., {profile['city']})")
+    return "Неизвестный пользователь"
+
+
+# Вспомогательная функция для проверки прав администратора
+def is_admin(user_id: int) -> bool:
+    """Проверка, является ли пользователь администратором"""
+    return user_id in ADMIN_USER_IDS
+
+
+# Функция для логирования действий пользователя
+def log_user_action(user, action: str, details: Dict = None):
+    """Логирование действий пользователя"""
+    user_info = {
+        'user_id': user.id,
+        'username': user.username,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'display_name': get_user_display_name(user)
+    }
+
+    # Получаем данные из профиля, если они есть
+    profile = db.get_user_profile(user.id)
+    if profile:
+        user_info['registered_name'] = f"{profile['last_name']} {profile['first_name']}"
+        user_info['city'] = profile['city']
+        user_info['birth_year'] = profile['birth_year']
+
+    log_message = f"👤 Пользователь: {user_info['display_name']} (ID: {user.id})"
+    if profile:
+        log_message += f" | Данные: {user_info['registered_name']}, {user_info['birth_year']} г.р., {user_info['city']}"
+    log_message += f" | Действие: {action}"
+    if details:
+        log_message += f" | Подробности: {json.dumps(details, ensure_ascii=False)}"
+
+    logger.info(log_message)
+
+
+# Функции для работы с ботом
+@bot.message_handler(commands=['start'])
+def start(message):
+    """Обработчик команды /start"""
+    user = message.from_user
+
+    # Логируем действие
+    log_user_action(user, "start_command")
+
+    welcome_message = (
+        f"👋 Привет, {user.first_name}!\n\n"
+        "Я бот для регистрации на турниры. Вот что я умею:\n\n"
+        "📝 /register - зарегистрироваться на турнир\n"
+        "👥 /participants - посмотреть участников турнира\n"
+        "✅ /my_registrations - показать мои регистрации\n"
+        "ℹ️ /help - показать справку\n\n"
+    )
+
+    # Добавляем админские команды в справку, если пользователь администратор
+    if is_admin(user.id):
+        welcome_message += (
+            "Для администраторов:\n"
+            "➕ /add_tournament - добавить новый турнир\n"
+            "❌ /delete_tournament - удалить турнир\n"
+        )
+
+    bot.reply_to(message, welcome_message)
+
+
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    """Обработчик команды /help"""
+    user = message.from_user
+    user_id = user.id
+
+    # Логируем действие
+    log_user_action(user, "help_command")
+
+    help_text = (
+        "📚 Справка по командам:\n\n"
+        "Для всех пользователей:\n"
+        "/start - начать работу с ботом\n"
+        "/register - зарегистрироваться на турнир\n"
+        "/participants - посмотреть участников турнира\n"
+        "/my_registrations - ваши регистрации\n"
+        "/help - эта справка\n\n"
+    )
+
+    if is_admin(user_id):
+        help_text += (
+            "Для администраторов:\n"
+            "/add_tournament - добавить новый турнир\n"
+            "/delete_tournament - удалить турнир\n"
+        )
+
+    bot.reply_to(message, help_text)
+
+
+@bot.message_handler(commands=['register'])
+def register_command(message):
+    """Показать список доступных турниров для регистрации"""
+    user = message.from_user
+    tournaments_list = db.get_tournaments()
+
+    # Логируем действие
+    log_user_action(user, "register_command", {"tournaments_count": len(tournaments_list)})
+
+    if not tournaments_list:
+        bot.reply_to(message, "📭 На данный нет активных турниров для регистрации.")
+        return
+
+    keyboard = types.InlineKeyboardMarkup()
+    for tournament in tournaments_list:
+        # Проверяем, зарегистрирован ли пользователь
+        participants = db.get_participants(tournament['id'])
+        is_registered = any(p['user_id'] == user.id for p in participants)
+
+        date_obj = datetime.fromisoformat(tournament['date'])
+        button_text = f"{tournament['name']} ({date_obj.strftime('%d.%m.%Y')})"
+
+        if is_registered:
+            button_text += " ✅"
+            callback_data = f"unreg_{tournament['id']}"
+        else:
+            callback_data = f"reg_{tournament['id']}"
+
+        button = types.InlineKeyboardButton(button_text, callback_data=callback_data)
+        keyboard.add(button)
+
+    bot.send_message(message.chat.id, "🏆 Выберите турнир для регистрации или отмены:", reply_markup=keyboard)
+
+
+@bot.message_handler(commands=['participants'])
+def participants_command(message):
+    """Показать список турниров для просмотра участников"""
+    user = message.from_user
+    tournaments_list = db.get_tournaments()
+
+    # Логируем действие
+    log_user_action(user, "participants_command", {"tournaments_count": len(tournaments_list)})
+
+    if not tournaments_list:
+        bot.reply_to(message, "Нет активных турниров.")
+        return
+
+    keyboard = types.InlineKeyboardMarkup()
+    for tournament in tournaments_list:
+        date_obj = datetime.fromisoformat(tournament['date'])
+        count = db.get_registration_count(tournament['id'])
+        button_text = f"{tournament['name']} ({date_obj.strftime('%d.%m.%Y')}) - {count} уч."
+        button = types.InlineKeyboardButton(button_text, callback_data=f"view_{tournament['id']}")
+        keyboard.add(button)
+
+    bot.send_message(message.chat.id, "👥 Выберите турнир для просмотра участников:", reply_markup=keyboard)
+
+
+@bot.message_handler(commands=['my_registrations'])
+def my_registrations(message):
+    """Показать регистрации пользователя"""
+    user = message.from_user
+    user_id = user.id
+    registrations = db.get_user_registrations(user_id)
+    profile = db.get_user_profile(user_id)
+
+    # Логируем действие
+    log_user_action(user, "my_registrations_command", {"registrations_count": len(registrations)})
+
+    if not registrations:
+        bot.reply_to(message, "📭 Вы еще не зарегистрированы ни на один турнир.")
+        return
+
+    # Показываем информацию о пользователе
+    if profile:
+        profile_text = (
+            f"👤 Ваши данные:\n"
+            f"• {profile['last_name']} {profile['first_name']} {profile['patronymic'] or ''}\n"
+            f"• {profile['birth_year']} г.р.\n"
+            f"• {profile['city']}\n\n"
+        )
+    else:
+        profile_text = ""
+
+    text = f"{profile_text}📋 Ваши регистрации:\n\n"
+    for reg in registrations:
+        date_obj = datetime.fromisoformat(reg['date'])
+        text += f"• {reg['name']} - {date_obj.strftime('%d.%m.%Y')}\n"
+
+    bot.reply_to(message, text)
+
+
+@bot.message_handler(commands=['add_tournament'])
+def add_tournament_start(message):
+    """Начало добавления турнира (только для админа)"""
+    user = message.from_user
+
+    if not is_admin(user.id):
+        log_user_action(user, "add_tournament_unauthorized")
+        bot.reply_to(message, "⛔ У вас нет прав для выполнения этой команды.")
+        return
+
+    log_user_action(user, "add_tournament_start")
+
+    user_states[user.id] = ADDING_TOURNAMENT_NAME
+    bot.reply_to(message, "Введите название турнира:")
+
+
+@bot.message_handler(commands=['delete_tournament'])
+def delete_tournament_start(message):
+    """Начало удаления турнира (только для админа)"""
+    user = message.from_user
+
+    if not is_admin(user.id):
+        log_user_action(user, "delete_tournament_unauthorized")
+        bot.reply_to(message, "⛔ У вас нет прав для выполнения этой команды.")
+        return
+
+    tournaments_list = db.get_tournaments()
+
+    log_user_action(user, "delete_tournament_start", {"tournaments_count": len(tournaments_list)})
+
+    if not tournaments_list:
+        bot.reply_to(message, "Нет активных турниров для удаления.")
+        return
+
+    keyboard = types.InlineKeyboardMarkup()
+    for tournament in tournaments_list:
+        date_obj = datetime.fromisoformat(tournament['date'])
+        count = db.get_registration_count(tournament['id'])
+        button_text = f"{tournament['name']} ({date_obj.strftime('%d.%m.%Y')}) - {count} уч."
+        button = types.InlineKeyboardButton(button_text, callback_data=f"del_{tournament['id']}")
+        keyboard.add(button)
+
+    cancel_button = types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete")
+    keyboard.add(cancel_button)
+
+    bot.send_message(message.chat.id, "Выберите турнир для удаления:", reply_markup=keyboard)
+
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    """Обработка нажатий на инлайн-кнопки"""
+    try:
+        data = call.data
+        user = call.from_user
+        user_id = user.id
+
+        # Логируем нажатие на кнопку
+        log_user_action(user, f"button_click", {"button_data": data})
+
+        # Обработка регистрации
+        if data.startswith('reg_'):
+            tournament_id = int(data.split('_')[1])
+
+            # Проверяем, есть ли уже профиль у пользователя
+            profile = db.get_user_profile(user_id)
+
+            if profile:
+                # Если профиль есть, сразу регистрируем
+                success = db.register_participant(tournament_id, user_id)
+
+                if success:
+                    tournament = db.get_tournament(tournament_id)
+
+                    # Логируем успешную регистрацию
+                    log_user_action(user, "register_success", {
+                        "tournament_id": tournament_id,
+                        "tournament_name": tournament['name'],
+                        "user_data": {
+                            "last_name": profile['last_name'],
+                            "first_name": profile['first_name'],
+                            "city": profile['city']
+                        }
+                    })
+
+                    bot.answer_callback_query(call.id, "✅ Вы успешно зарегистрировались!")
+
+                    # Формируем красивое сообщение с данными участника
+                    participant_text = (
+                        f"✅ Вы успешно зарегистрировались на турнир!\n\n"
+                        f"🏆 Турнир: {tournament['name']}\n"
+                        f"📅 Дата: {datetime.fromisoformat(tournament['date']).strftime('%d.%m.%Y')}\n\n"
+                        f"Ваши данные:\n"
+                        f"• {profile['last_name']} {profile['first_name']} {profile['patronymic'] or ''}\n"
+                        f"• {profile['birth_year']} г.р.\n"
+                        f"• {profile['city']}"
+                    )
+
+                    bot.edit_message_text(
+                        participant_text,
+                        call.message.chat.id,
+                        call.message.message_id
+                    )
+
+                    # Отправляем обновленный список в группу
+                    send_participants_to_group(tournament_id)
+                else:
+                    log_user_action(user, "register_failed_already_registered", {
+                        "tournament_id": tournament_id
+                    })
+                    bot.answer_callback_query(call.id, "❌ Вы уже зарегистрированы на этот турнир.")
+            else:
+                # Если профиля нет, начинаем сбор данных
+                log_user_action(user, "register_new_user_start", {
+                    "tournament_id": tournament_id
+                })
+
+                temp_registration[user_id] = {'tournament_id': tournament_id}
+                user_states[user_id] = ASKING_LAST_NAME
+
+                bot.edit_message_text(
+                    "Для регистрации на турнир мне нужно знать немного информации о вас.\n\n"
+                    "Введите вашу ФАМИЛИЮ:",
+                    call.message.chat.id,
+                    call.message.message_id
+                )
+
+        elif data.startswith('unreg_'):
+            tournament_id = int(data.split('_')[1])
+            tournament = db.get_tournament(tournament_id)
+
+            if not tournament:
+                log_user_action(user, "unregister_failed_tournament_not_found", {
+                    "tournament_id": tournament_id
+                })
+                bot.answer_callback_query(call.id, "❌ Турнир не найден.")
+                return
+
+            # Отменяем регистрацию
+            success = db.unregister_participant(tournament_id, user_id)
+
+            if success:
+                log_user_action(user, "unregister_success", {
+                    "tournament_id": tournament_id,
+                    "tournament_name": tournament['name']
+                })
+
+                bot.answer_callback_query(call.id, "✅ Регистрация отменена!")
+                bot.edit_message_text(
+                    f"✅ Вы отменили регистрацию на турнир '{tournament['name']}'.",
+                    call.message.chat.id,
+                    call.message.message_id
+                )
+
+                # Отправляем обновленный список в группу
+                send_participants_to_group(tournament_id)
+            else:
+                log_user_action(user, "unregister_failed_not_registered", {
+                    "tournament_id": tournament_id
+                })
+                bot.answer_callback_query(call.id, "❌ Вы не были зарегистрированы на этот турнир.")
+
+        elif data.startswith('view_'):
+            tournament_id = int(data.split('_')[1])
+            tournament = db.get_tournament(tournament_id)
+
+            log_user_action(user, "view_participants", {
+                "tournament_id": tournament_id,
+                "tournament_name": tournament['name'] if tournament else "Unknown"
+            })
+
+            show_participants(call, tournament_id)
+
+        elif data.startswith('del_'):
+            # Проверяем права администратора
+            if not is_admin(user_id):
+                log_user_action(user, "delete_tournament_unauthorized", {
+                    "tournament_id": int(data.split('_')[1])
+                })
+                bot.answer_callback_query(call.id, "⛔ У вас нет прав для удаления турниров.")
+                return
+
+            tournament_id = int(data.split('_')[1])
+            tournament = db.get_tournament(tournament_id)
+
+            if tournament:
+                db.delete_tournament(tournament_id)
+
+                log_user_action(user, "delete_tournament_success", {
+                    "tournament_id": tournament_id,
+                    "tournament_name": tournament['name'],
+                    "participants_count": db.get_registration_count(tournament_id)
+                })
+
+                bot.answer_callback_query(call.id, f"✅ Турнир удален!")
+                bot.edit_message_text(
+                    f"✅ Турнир '{tournament['name']}' успешно удален.",
+                    call.message.chat.id,
+                    call.message.message_id
+                )
+            else:
+                log_user_action(user, "delete_tournament_failed_not_found", {
+                    "tournament_id": tournament_id
+                })
+                bot.answer_callback_query(call.id, "❌ Турнир не найден.")
+
+        elif data == "cancel_delete":
+            log_user_action(user, "delete_tournament_cancelled")
+            bot.answer_callback_query(call.id, "❌ Удаление отменено.")
+            bot.edit_message_text(
+                "❌ Удаление отменено.",
+                call.message.chat.id,
+                call.message.message_id
+            )
+
+    except Exception as e:
+        logger.error(f"Ошибка в callback_handler: {e}")
+        bot.answer_callback_query(call.id, "❌ Произошла ошибка.")
+
+
+def show_participants(call, tournament_id: int):
+    """Показать список участников турнира с полной информацией"""
+    tournament = db.get_tournament(tournament_id)
+    if not tournament:
+        bot.edit_message_text(
+            "❌ Турнир не найден.",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        return
+
+    participants = db.get_participants(tournament_id)
+
+    date_obj = datetime.fromisoformat(tournament['date'])
+    text = f"🏆 Турнир: {tournament['name']}\n"
+    text += f"📅 Дата: {date_obj.strftime('%d.%m.%Y')}\n"
+    text += f"👥 Участников: {len(participants)}\n\n"
+
+    if participants:
+        for i, p in enumerate(participants, 1):
+            text += f"{i}. {p['last_name']} {p['first_name']} {p['patronymic'] or ''}\n"
+            text += f"   {p['birth_year']} г.р., {p['city']}\n"
+            if p['telegram_username']:
+                text += f"   Telegram: @{p['telegram_username']}\n"
+            reg_date = datetime.fromisoformat(p['registered_at'])
+            text += f"   Зарег.: {reg_date.strftime('%d.%m.%Y %H:%M')}\n\n"
+    else:
+        text += "Пока нет зарегистрированных участников."
+
+    bot.edit_message_text(
+        text,
+        call.message.chat.id,
+        call.message.message_id
+    )
+
+
+def send_participants_to_group(tournament_id: int):
+    """Отправка списка участников в группу"""
+    tournament = db.get_tournament(tournament_id)
+    if not tournament:
+        return
+
+    participants = db.get_participants(tournament_id)
+
+    date_obj = datetime.fromisoformat(tournament['date'])
+    text = f"📢 <b>Обновление списка участников!</b>\n\n"
+    text += f"🏆 Турнир: {tournament['name']}\n"
+    text += f"📅 Дата: {date_obj.strftime('%d.%m.%Y')}\n"
+    text += f"👥 Всего участников: {len(participants)}\n\n"
+
+    if participants:
+        text += "Список участников:\n"
+        for i, p in enumerate(participants, 1):
+            text += f"{i}. {p['last_name']} {p['first_name']} {p['patronymic'] or ''} ({p['birth_year']} г.р., {p['city']})"
+            if p['telegram_username']:
+                text += f" @{p['telegram_username']}"
+            text += "\n"
+    else:
+        text += "Пока нет зарегистрированных участников."
+
+    try:
+        bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=text,
+            parse_mode='HTML'
+        )
+        logger.info(f"Отправлено обновление участников в группу для турнира {tournament['name']}")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке в группу: {e}")
+
+
+@bot.message_handler(func=lambda message: True)
+def handle_messages(message):
+    """Обработка всех остальных сообщений"""
+    user = message.from_user
+    user_id = user.id
+    state = user_states.get(user_id)
+
+    # Обработка добавления турнира (админ)
+    if state == ADDING_TOURNAMENT_NAME:
+        if not is_admin(user_id):
+            log_user_action(user, "unauthorized_tournament_add_attempt", {"message": message.text[:50]})
+            bot.reply_to(message, "⛔ У вас нет прав для выполнения этой команды.")
+            del user_states[user_id]
+            return
+
+        user_data[user_id] = {'tournament_name': message.text}
+        user_states[user_id] = ADDING_TOURNAMENT_DATE
+
+        log_user_action(user, "add_tournament_name_entered", {"tournament_name": message.text})
+
+        bot.reply_to(
+            message,
+            "Теперь введите дату турнира в формате ДД.ММ.ГГГГ\n"
+            "Например: 25.12.2024"
+        )
+
+    elif state == ADDING_TOURNAMENT_DATE:
+        if not is_admin(user_id):
+            log_user_action(user, "unauthorized_tournament_add_attempt", {"message": message.text[:50]})
+            bot.reply_to(message, "⛔ У вас нет прав для выполнения этой команды.")
+            del user_states[user_id]
+            return
+
+        try:
+            date_str = message.text
+            date_obj = datetime.strptime(date_str, "%d.%m.%Y")
+
+            # Добавляем время 12:00 для совместимости с форматом ISO
+            date_with_time = datetime.combine(date_obj.date(), datetime.min.time()).isoformat()
+
+            tournament_name = user_data.get(user_id, {}).get('tournament_name', 'Турнир')
+            tournament_id = db.add_tournament(tournament_name, date_with_time, user_id)
+
+            log_user_action(user, "add_tournament_success", {
+                "tournament_name": tournament_name,
+                "tournament_date": date_str,
+                "tournament_id": tournament_id
+            })
+
+            bot.reply_to(
+                message,
+                f"✅ Турнир '{tournament_name}' на {date_obj.strftime('%d.%m.%Y')} успешно добавлен!"
+            )
+
+            # Очищаем состояния
+            del user_states[user_id]
+            del user_data[user_id]
+
+        except ValueError:
+            log_user_action(user, "add_tournament_invalid_date", {"entered_date": message.text})
+            bot.reply_to(
+                message,
+                "❌ Неверный формат даты. Пожалуйста, используйте формат ДД.ММ.ГГГГ\n"
+                "Например: 25.12.2024"
+            )
+
+    # Обработка сбора данных пользователя при первой регистрации
+    elif state == ASKING_LAST_NAME:
+        temp_registration[user_id]['last_name'] = message.text
+        user_states[user_id] = ASKING_FIRST_NAME
+
+        log_user_action(user, "registration_data_entered", {"field": "last_name", "value": message.text})
+
+        bot.reply_to(message, "Введите ваше ИМЯ:")
+
+    elif state == ASKING_FIRST_NAME:
+        temp_registration[user_id]['first_name'] = message.text
+        user_states[user_id] = ASKING_PATRONYMIC
+
+        log_user_action(user, "registration_data_entered", {"field": "first_name", "value": message.text})
+
+        bot.reply_to(message, "Введите ваше ОТЧЕСТВО (если нет, отправьте '-'):")
+
+    elif state == ASKING_PATRONYMIC:
+        patronymic = message.text if message.text != '-' else ''
+        temp_registration[user_id]['patronymic'] = patronymic
+        user_states[user_id] = ASKING_BIRTH_YEAR
+
+        log_user_action(user, "registration_data_entered", {"field": "patronymic", "value": patronymic or "не указано"})
+
+        bot.reply_to(message, "Введите ваш ГОД РОЖДЕНИЯ (например: 1990):")
+
+    elif state == ASKING_BIRTH_YEAR:
+        try:
+            birth_year = int(message.text)
+            current_year = datetime.now().year
+            if birth_year < 1900 or birth_year > current_year:
+                raise ValueError
+
+            temp_registration[user_id]['birth_year'] = birth_year
+            user_states[user_id] = ASKING_CITY
+
+            log_user_action(user, "registration_data_entered", {"field": "birth_year", "value": birth_year})
+
+            bot.reply_to(message, "Введите город, который вы представляете:")
+        except ValueError:
+            log_user_action(user, "registration_invalid_birth_year", {"entered": message.text})
+            bot.reply_to(message, "❌ Пожалуйста, введите корректный год рождения (например: 1990)")
+
+    elif state == ASKING_CITY:
+        try:
+            # Сохраняем профиль пользователя
+            data = temp_registration[user_id]
+            success = db.save_user_profile(
+                user_id=user_id,
+                telegram_username=user.username,
+                telegram_first_name=user.first_name,
+                telegram_last_name=user.last_name,
+                first_name=data['first_name'],
+                last_name=data['last_name'],
+                patronymic=data.get('patronymic', ''),
+                birth_year=data['birth_year'],
+                city=message.text
+            )
+
+            if success:
+                # Регистрируем на турнир
+                tournament_id = data['tournament_id']
+                register_success = db.register_participant(tournament_id, user_id)
+
+                if register_success:
+                    tournament = db.get_tournament(tournament_id)
+                    profile = db.get_user_profile(user_id)
+
+                    log_user_action(user, "registration_complete", {
+                        "tournament_id": tournament_id,
+                        "tournament_name": tournament['name'],
+                        "user_data": {
+                            "last_name": data['last_name'],
+                            "first_name": data['first_name'],
+                            "birth_year": data['birth_year'],
+                            "city": message.text
+                        }
+                    })
+
+                    participant_text = (
+                        f"✅ Регистрация успешно завершена!\n\n"
+                        f"🏆 Турнир: {tournament['name']}\n"
+                        f"📅 Дата: {datetime.fromisoformat(tournament['date']).strftime('%d.%m.%Y')}\n\n"
+                        f"Ваши данные сохранены:\n"
+                        f"• {profile['last_name']} {profile['first_name']} {profile['patronymic'] or ''}\n"
+                        f"• {profile['birth_year']} г.р.\n"
+                        f"• {profile['city']}"
+                    )
+
+                    bot.reply_to(message, participant_text)
+
+                    # Отправляем обновленный список в группу
+                    send_participants_to_group(tournament_id)
+                else:
+                    log_user_action(user, "registration_failed_already_registered", {
+                        "tournament_id": tournament_id
+                    })
+                    bot.reply_to(message,
+                                 "❌ Не удалось зарегистрироваться на турнир. Возможно, вы уже зарегистрированы.")
+            else:
+                log_user_action(user, "registration_failed_db_error")
+                bot.reply_to(message, "❌ Не удалось сохранить ваши данные. Попробуйте позже.")
+
+            # Очищаем временные данные
+            del user_states[user_id]
+            del temp_registration[user_id]
+
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении профиля: {e}")
+            log_user_action(user, "registration_error", {"error": str(e)})
+            bot.reply_to(message, "❌ Произошла ошибка при сохранении данных. Попробуйте позже.")
+
+def signal_term_handler(sig_num, frame):
+    """Обработка сигнала о прерывание процесса"""
+    logger.info('Бот остановлен сигналом: %s; frame: %s',sig_num, frame)
+    bot.stop_polling()
+
+# Запуск бота
+if __name__ == '__main__':
+    logger.info("Бот запущен...")
+    logger.info(f"Администраторы: {ADMIN_USER_IDS}")
+    logger.info(f"Таймаут polling: {POLLING_TIMEOUT} секунд")
+
+    signal.signal(signal.SIGTERM, signal_term_handler)
+
+    bot.polling(none_stop=True, timeout=POLLING_TIMEOUT)
+    logger.info('Бот остановлен')

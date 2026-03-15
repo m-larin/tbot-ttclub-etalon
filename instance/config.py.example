@@ -1,0 +1,8 @@
+SALES_GROUP_CHAT_ID = 0000000
+ACCESS_TOCKEN = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+LOG_FILE = '/var/log/btlab-bot.log'
+DATABASE_NAME = 'telegram_bot'
+DATABASE_USER = 'telegram_bot'
+DATABASE_PASSWORD = 'telegram_bot'
+DATABASE_HOST = 'localhost'
+DATABASE_PORT = '5432'

@@ -1,0 +1,14 @@
+[MAIN]
+max-line-length=120
+ignore-paths=
+    ^\.git/.*$,
+    ^venv/.*$,
+    ^\.venv/.*$,
+    ^__pycache__/.*$,
+    ^\.idea/.*$,
+    ^instance/.*$
+
+ignore=bot_test.py
+
+disable=broad-except
+

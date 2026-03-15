@@ -1,0 +1,12 @@
+[Unit]
+Description=Btlab bot
+After=multi-user.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/btlab_bot
+ExecStart=/opt/btlab_bot/venv/bin/python3 bot.py
+Restart=on-abort
+
+[Install]
+WantedBy=multi-user.target
