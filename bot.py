@@ -60,33 +60,6 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # Таблица профилей пользователей (упрощена)
-            cursor.execute('''
-                           CREATE TABLE IF NOT EXISTS user_profiles
-                           (
-                               user_id
-                               INTEGER
-                               PRIMARY
-                               KEY,
-                               full_name
-                               TEXT
-                               NOT
-                               NULL,
-                               city
-                               TEXT
-                               NOT
-                               NULL,
-                               registered_at
-                               TEXT
-                               NOT
-                               NULL,
-                               updated_at
-                               TEXT
-                               NOT
-                               NULL
-                           )
-                           ''')
-
             # Таблица турниров
             cursor.execute('''
                            CREATE TABLE IF NOT EXISTS tournaments
@@ -119,7 +92,7 @@ class Database:
                            )
                            ''')
 
-            # Таблица участников
+            # Таблица участников (теперь храним ФИО и город для каждой регистрации)
             cursor.execute('''
                            CREATE TABLE IF NOT EXISTS participants
                            (
@@ -132,8 +105,16 @@ class Database:
                                INTEGER
                                NOT
                                NULL,
-                               user_id
+                               registered_by
                                INTEGER
+                               NOT
+                               NULL,
+                               full_name
+                               TEXT
+                               NOT
+                               NULL,
+                               city
+                               TEXT
                                NOT
                                NULL,
                                registered_at
@@ -147,66 +128,11 @@ class Database:
                            ) REFERENCES tournaments
                            (
                                id
-                           ) ON DELETE CASCADE,
-                               FOREIGN KEY
-                           (
-                               user_id
-                           ) REFERENCES user_profiles
-                           (
-                               user_id
-                           )
-                             ON DELETE CASCADE,
-                               UNIQUE
-                           (
-                               tournament_id,
-                               user_id
-                           )
+                           ) ON DELETE CASCADE
                                )
                            ''')
 
             conn.commit()
-
-    # Методы для работы с профилями пользователей
-    def get_user_profile(self, user_id: int) -> Optional[Dict]:
-        """Получение профиля пользователя"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM user_profiles WHERE user_id = ?", (user_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
-
-    def save_user_profile(self, user_id: int, full_name: str, city: str) -> bool:
-        """Сохранение или обновление профиля пользователя"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                now = datetime.now().isoformat()
-
-                # Проверяем, существует ли уже профиль
-                existing = self.get_user_profile(user_id)
-
-                if existing:
-                    # Обновляем существующий профиль
-                    cursor.execute('''
-                                   UPDATE user_profiles
-                                   SET full_name  = ?,
-                                       city       = ?,
-                                       updated_at = ?
-                                   WHERE user_id = ?
-                                   ''', (full_name, city, now, user_id))
-                else:
-                    # Создаем новый профиль
-                    cursor.execute('''
-                                   INSERT INTO user_profiles
-                                       (user_id, full_name, city, registered_at, updated_at)
-                                   VALUES (?, ?, ?, ?, ?)
-                                   ''', (user_id, full_name, city, now, now))
-
-                conn.commit()
-                return True
-        except Exception as e:
-            logger.error(f"Ошибка при сохранении профиля: {e}")
-            return False
 
     # Методы для работы с турнирами
     def add_tournament(self, name: str, date: str, created_by: int) -> int:
@@ -254,41 +180,33 @@ class Database:
             )
             conn.commit()
 
-    def register_participant(self, tournament_id: int, user_id: int) -> bool:
+    def register_participant(self, tournament_id: int, registered_by: int,
+                             full_name: str, city: str) -> bool:
         """Регистрация участника на турнир"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "INSERT INTO participants (tournament_id, user_id, registered_at) VALUES (?, ?, ?)",
-                    (tournament_id, user_id, datetime.now().isoformat())
+                    """INSERT INTO participants
+                           (tournament_id, registered_by, full_name, city, registered_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (tournament_id, registered_by, full_name, city, datetime.now().isoformat())
                 )
                 conn.commit()
                 return True
-        except sqlite3.IntegrityError:
-            return False  # Участник уже зарегистрирован
-
-    def unregister_participant(self, tournament_id: int, user_id: int) -> bool:
-        """Отмена регистрации участника"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "DELETE FROM participants WHERE tournament_id = ? AND user_id = ?",
-                (tournament_id, user_id)
-            )
-            conn.commit()
-            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Ошибка при регистрации: {e}")
+            return False
 
     def get_participants(self, tournament_id: int) -> List[Dict]:
-        """Получение списка участников турнира с полной информацией"""
+        """Получение списка участников турнира"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                           SELECT p.*, u.full_name, u.city
-                           FROM participants p
-                                    JOIN user_profiles u ON p.user_id = u.user_id
-                           WHERE p.tournament_id = ?
-                           ORDER BY p.registered_at
+                           SELECT *
+                           FROM participants
+                           WHERE tournament_id = ?
+                           ORDER BY registered_at
                            ''', (tournament_id,))
 
             participants = []
@@ -296,19 +214,19 @@ class Database:
                 participants.append(dict(row))
             return participants
 
-    def get_user_registrations(self, user_id: int) -> List[Dict]:
-        """Получение списка турниров, на которые зарегистрирован пользователь"""
+    def get_user_registrations(self, registered_by: int) -> List[Dict]:
+        """Получение списка регистраций, сделанных пользователем"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                           SELECT t.*, p.registered_at as reg_date
+                           SELECT t.*, p.full_name, p.city, p.registered_at as reg_date
                            FROM tournaments t
                                     JOIN participants p ON t.id = p.tournament_id
-                           WHERE p.user_id = ?
+                           WHERE p.registered_by = ?
                              AND t.is_active = 1
                              AND t.date >= date ('now')
-                           ORDER BY t.date
-                           ''', (user_id,))
+                           ORDER BY t.date, p.registered_at
+                           ''', (registered_by,))
 
             registrations = []
             for row in cursor.fetchall():
@@ -351,7 +269,7 @@ def is_admin(user_id: int) -> bool:
 
 # Функция для логирования действий пользователя
 def log_user_action(user, action: str, details: Dict = None):
-    """Логирование действий пользователя (упрощено)"""
+    """Логирование действий пользователя"""
     log_message = f"👤 Пользователь: {get_user_display_name(user)} (ID: {user.id}) | Действие: {action}"
     if details:
         log_message += f" | Подробности: {json.dumps(details, ensure_ascii=False)}"
@@ -370,7 +288,7 @@ def start(message):
     welcome_message = (
         f"👋 Привет, {user.first_name}!\n\n"
         "Я бот для регистрации на турниры. Вот что я умею:\n\n"
-        "📝 /register - зарегистрироваться на турнир\n"
+        "📝 /register - зарегистрировать участника на турнир\n"
         "👥 /participants - посмотреть участников турнира\n"
         "✅ /my_registrations - показать мои регистрации\n"
         "ℹ️ /help - показать справку\n\n"
@@ -400,7 +318,7 @@ def help_command(message):
         "📚 Справка по командам:\n\n"
         "Для всех пользователей:\n"
         "/start - начать работу с ботом\n"
-        "/register - зарегистрироваться на турнир\n"
+        "/register - зарегистрировать участника на турнир\n"
         "/participants - посмотреть участников турнира\n"
         "/my_registrations - ваши регистрации\n"
         "/help - эта справка\n\n"
@@ -431,23 +349,14 @@ def register_command(message):
 
     keyboard = types.InlineKeyboardMarkup()
     for tournament in tournaments_list:
-        # Проверяем, зарегистрирован ли пользователь
-        participants = db.get_participants(tournament['id'])
-        is_registered = any(p['user_id'] == user.id for p in participants)
-
         date_obj = datetime.fromisoformat(tournament['date'])
         button_text = f"{tournament['name']} ({date_obj.strftime('%d.%m.%Y')})"
-
-        if is_registered:
-            button_text += " ✅"
-            callback_data = f"unreg_{tournament['id']}"
-        else:
-            callback_data = f"reg_{tournament['id']}"
+        callback_data = f"reg_{tournament['id']}"
 
         button = types.InlineKeyboardButton(button_text, callback_data=callback_data)
         keyboard.add(button)
 
-    bot.send_message(message.chat.id, "🏆 Выберите турнир для регистрации или отмены:", reply_markup=keyboard)
+    bot.send_message(message.chat.id, "🏆 Выберите турнир для регистрации участника:", reply_markup=keyboard)
 
 
 @bot.message_handler(commands=['participants'])
@@ -476,33 +385,28 @@ def participants_command(message):
 
 @bot.message_handler(commands=['my_registrations'])
 def my_registrations(message):
-    """Показать регистрации пользователя"""
+    """Показать регистрации, сделанные пользователем"""
     user = message.from_user
     user_id = user.id
     registrations = db.get_user_registrations(user_id)
-    profile = db.get_user_profile(user_id)
 
     # Логируем действие
     log_user_action(user, "my_registrations_command", {"registrations_count": len(registrations)})
 
     if not registrations:
-        bot.reply_to(message, "📭 Вы еще не зарегистрированы ни на один турнир.")
+        bot.reply_to(message, "📭 Вы еще никого не зарегистрировали на турниры.")
         return
 
-    # Показываем информацию о пользователе
-    if profile:
-        profile_text = (
-            f"👤 Ваши данные:\n"
-            f"• {profile['full_name']}\n"
-            f"• {profile['city']}\n\n"
-        )
-    else:
-        profile_text = ""
+    text = "📋 Ваши регистрации:\n\n"
+    current_tournament = None
 
-    text = f"{profile_text}📋 Ваши регистрации:\n\n"
     for reg in registrations:
-        date_obj = datetime.fromisoformat(reg['date'])
-        text += f"• {reg['name']} - {date_obj.strftime('%d.%m.%Y')}\n"
+        if current_tournament != reg['name']:
+            current_tournament = reg['name']
+            date_obj = datetime.fromisoformat(reg['date'])
+            text += f"\n🏆 {reg['name']} ({date_obj.strftime('%d.%m.%Y')}):\n"
+
+        text += f"   • {reg['full_name']} ({reg['city']})\n"
 
     bot.reply_to(message, text)
 
@@ -569,98 +473,29 @@ def callback_handler(call):
         # Обработка регистрации
         if data.startswith('reg_'):
             tournament_id = int(data.split('_')[1])
-
-            # Проверяем, есть ли уже профиль у пользователя
-            profile = db.get_user_profile(user_id)
-
-            if profile:
-                # Если профиль есть, сразу регистрируем
-                success = db.register_participant(tournament_id, user_id)
-
-                if success:
-                    tournament = db.get_tournament(tournament_id)
-
-                    # Логируем успешную регистрацию
-                    log_user_action(user, "register_success", {
-                        "tournament_id": tournament_id,
-                        "tournament_name": tournament['name']
-                    })
-
-                    bot.answer_callback_query(call.id, "✅ Вы успешно зарегистрировались!")
-
-                    # Формируем красивое сообщение с данными участника
-                    participant_text = (
-                        f"✅ Вы успешно зарегистрировались на турнир!\n\n"
-                        f"🏆 Турнир: {tournament['name']}\n"
-                        f"📅 Дата: {datetime.fromisoformat(tournament['date']).strftime('%d.%m.%Y')}\n\n"
-                        f"Ваши данные:\n"
-                        f"• {profile['full_name']}\n"
-                        f"• {profile['city']}"
-                    )
-
-                    bot.edit_message_text(
-                        participant_text,
-                        call.message.chat.id,
-                        call.message.message_id
-                    )
-
-                    # Отправляем обновленный список в группу
-                    send_participants_to_group(tournament_id)
-                else:
-                    log_user_action(user, "register_failed_already_registered", {
-                        "tournament_id": tournament_id
-                    })
-                    bot.answer_callback_query(call.id, "❌ Вы уже зарегистрированы на этот турнир.")
-            else:
-                # Если профиля нет, начинаем сбор данных
-                log_user_action(user, "register_new_user_start", {
-                    "tournament_id": tournament_id
-                })
-
-                temp_registration[user_id] = {'tournament_id': tournament_id}
-                user_states[user_id] = ASKING_FULL_NAME
-
-                bot.edit_message_text(
-                    "Для регистрации на турнир мне нужно знать немного информации о вас.\n\n"
-                    "Введите ваше ФИО полностью (например: Иванов Иван Иванович):",
-                    call.message.chat.id,
-                    call.message.message_id
-                )
-
-        elif data.startswith('unreg_'):
-            tournament_id = int(data.split('_')[1])
             tournament = db.get_tournament(tournament_id)
 
             if not tournament:
-                log_user_action(user, "unregister_failed_tournament_not_found", {
+                log_user_action(user, "register_failed_tournament_not_found", {
                     "tournament_id": tournament_id
                 })
                 bot.answer_callback_query(call.id, "❌ Турнир не найден.")
                 return
 
-            # Отменяем регистрацию
-            success = db.unregister_participant(tournament_id, user_id)
+            # Начинаем сбор данных для регистрации
+            log_user_action(user, "register_new_participant_start", {
+                "tournament_id": tournament_id,
+                "tournament_name": tournament['name']
+            })
 
-            if success:
-                log_user_action(user, "unregister_success", {
-                    "tournament_id": tournament_id,
-                    "tournament_name": tournament['name']
-                })
+            temp_registration[user_id] = {'tournament_id': tournament_id}
+            user_states[user_id] = ASKING_FULL_NAME
 
-                bot.answer_callback_query(call.id, "✅ Регистрация отменена!")
-                bot.edit_message_text(
-                    f"✅ Вы отменили регистрацию на турнир '{tournament['name']}'.",
-                    call.message.chat.id,
-                    call.message.message_id
-                )
-
-                # Отправляем обновленный список в группу
-                send_participants_to_group(tournament_id)
-            else:
-                log_user_action(user, "unregister_failed_not_registered", {
-                    "tournament_id": tournament_id
-                })
-                bot.answer_callback_query(call.id, "❌ Вы не были зарегистрированы на этот турнир.")
+            bot.edit_message_text(
+                "Введите ФИО участника (например: Иванов Иван Иванович):",
+                call.message.chat.id,
+                call.message.message_id
+            )
 
         elif data.startswith('view_'):
             tournament_id = int(data.split('_')[1])
@@ -721,7 +556,7 @@ def callback_handler(call):
 
 
 def show_participants(call, tournament_id: int):
-    """Показать список участников турнира с полной информацией"""
+    """Показать список участников турнира"""
     tournament = db.get_tournament(tournament_id)
     if not tournament:
         bot.edit_message_text(
@@ -849,70 +684,75 @@ def handle_messages(message):
                 "Например: 25.12.2024"
             )
 
-    # Обработка сбора данных пользователя при первой регистрации
+    # Обработка сбора данных участника при регистрации
     elif state == ASKING_FULL_NAME:
+        temp_registration[user_id] = temp_registration.get(user_id, {})
         temp_registration[user_id]['full_name'] = message.text
         user_states[user_id] = ASKING_CITY
 
-        log_user_action(user, "registration_data_entered", {"field": "full_name"})
+        log_user_action(user, "participant_data_entered", {"field": "full_name"})
 
-        bot.reply_to(message, "Введите город, который вы представляете:")
+        bot.reply_to(message, "Введите город, который представляет участник:")
 
     elif state == ASKING_CITY:
         try:
-            # Сохраняем профиль пользователя
-            data = temp_registration[user_id]
-            success = db.save_user_profile(
-                user_id=user_id,
-                full_name=data['full_name'],
-                city=message.text
-            )
+            data = temp_registration.get(user_id, {})
+            if not data or 'full_name' not in data:
+                log_user_action(user, "registration_error_missing_data")
+                bot.reply_to(message, "❌ Ошибка данных. Начните регистрацию заново через /register")
+                del user_states[user_id]
+                if user_id in temp_registration:
+                    del temp_registration[user_id]
+                return
+
+            # Регистрируем участника
+            tournament_id = data['tournament_id']
+            full_name = data['full_name']
+            city = message.text
+
+            success = db.register_participant(tournament_id, user_id, full_name, city)
 
             if success:
-                # Регистрируем на турнир
-                tournament_id = data['tournament_id']
-                register_success = db.register_participant(tournament_id, user_id)
+                tournament = db.get_tournament(tournament_id)
 
-                if register_success:
-                    tournament = db.get_tournament(tournament_id)
-                    profile = db.get_user_profile(user_id)
+                log_user_action(user, "registration_complete", {
+                    "tournament_id": tournament_id,
+                    "tournament_name": tournament['name'],
+                    "participant_name": full_name
+                })
 
-                    log_user_action(user, "registration_complete", {
-                        "tournament_id": tournament_id,
-                        "tournament_name": tournament['name']
-                    })
+                participant_text = (
+                    f"✅ Участник успешно зарегистрирован!\n\n"
+                    f"🏆 Турнир: {tournament['name']}\n"
+                    f"📅 Дата: {datetime.fromisoformat(tournament['date']).strftime('%d.%m.%Y')}\n\n"
+                    f"Данные участника:\n"
+                    f"• {full_name}\n"
+                    f"• {city}"
+                )
 
-                    participant_text = (
-                        f"✅ Регистрация успешно завершена!\n\n"
-                        f"🏆 Турнир: {tournament['name']}\n"
-                        f"📅 Дата: {datetime.fromisoformat(tournament['date']).strftime('%d.%m.%Y')}\n\n"
-                        f"Ваши данные сохранены:\n"
-                        f"• {profile['full_name']}\n"
-                        f"• {profile['city']}"
-                    )
+                bot.reply_to(message, participant_text)
 
-                    bot.reply_to(message, participant_text)
-
-                    # Отправляем обновленный список в группу
-                    send_participants_to_group(tournament_id)
-                else:
-                    log_user_action(user, "registration_failed_already_registered", {
-                        "tournament_id": tournament_id
-                    })
-                    bot.reply_to(message,
-                                 "❌ Не удалось зарегистрироваться на турнир. Возможно, вы уже зарегистрированы.")
+                # Отправляем обновленный список в группу
+                send_participants_to_group(tournament_id)
             else:
                 log_user_action(user, "registration_failed_db_error")
-                bot.reply_to(message, "❌ Не удалось сохранить ваши данные. Попробуйте позже.")
+                bot.reply_to(message, "❌ Не удалось зарегистрировать участника. Попробуйте позже.")
 
             # Очищаем временные данные
             del user_states[user_id]
-            del temp_registration[user_id]
+            if user_id in temp_registration:
+                del temp_registration[user_id]
 
         except Exception as e:
-            logger.error(f"Ошибка при сохранении профиля: {e}")
+            logger.error(f"Ошибка при регистрации: {e}")
             log_user_action(user, "registration_error", {"error": str(e)})
-            bot.reply_to(message, "❌ Произошла ошибка при сохранении данных. Попробуйте позже.")
+            bot.reply_to(message, "❌ Произошла ошибка при регистрации. Попробуйте позже.")
+
+            # Очищаем временные данные в случае ошибки
+            if user_id in user_states:
+                del user_states[user_id]
+            if user_id in temp_registration:
+                del temp_registration[user_id]
 
 
 def signal_term_handler(sig_num, frame):
