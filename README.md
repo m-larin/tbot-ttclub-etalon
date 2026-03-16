@@ -6,12 +6,16 @@
 Установка bot-а
 ````
 cd /opt
+mkdir bot
+cd bot
 git clone https://github.com/m-larin/tbot-ttclub-etalon.git
 cd tbot-ttclub-etalon
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-cp instance/config.py.example instance/config.py 
+cp instance/config.py.example instance/config.py
+groupadd -r tbot
+useradd -r -g tbot -d /opt/bot -s /sbin/nologin tbot
 ````
 
 Внести правки в конфиг файл instance/config.py
