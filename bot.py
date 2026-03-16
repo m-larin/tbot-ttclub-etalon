@@ -31,11 +31,8 @@ logger = logging.getLogger(__name__)
 # Состояния для регистрации турниров и сбора данных
 ADDING_TOURNAMENT_NAME = 1
 ADDING_TOURNAMENT_DATE = 2
-ASKING_FIRST_NAME = 3
-ASKING_LAST_NAME = 4
-ASKING_PATRONYMIC = 5
-ASKING_BIRTH_YEAR = 6
-ASKING_CITY = 7
+ASKING_FULL_NAME = 3
+ASKING_CITY = 4
 
 # Хранилище состояний и данных пользователей
 user_states = {}
@@ -63,7 +60,7 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # Таблица профилей пользователей
+            # Таблица профилей пользователей (упрощена)
             cursor.execute('''
                            CREATE TABLE IF NOT EXISTS user_profiles
                            (
@@ -71,24 +68,8 @@ class Database:
                                INTEGER
                                PRIMARY
                                KEY,
-                               telegram_username
-                               TEXT,
-                               telegram_first_name
-                               TEXT,
-                               telegram_last_name
-                               TEXT,
-                               first_name
+                               full_name
                                TEXT
-                               NOT
-                               NULL,
-                               last_name
-                               TEXT
-                               NOT
-                               NULL,
-                               patronymic
-                               TEXT,
-                               birth_year
-                               INTEGER
                                NOT
                                NULL,
                                city
@@ -194,9 +175,7 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def save_user_profile(self, user_id: int, telegram_username: str, telegram_first_name: str,
-                          telegram_last_name: str, first_name: str, last_name: str,
-                          patronymic: str, birth_year: int, city: str) -> bool:
+    def save_user_profile(self, user_id: int, full_name: str, city: str) -> bool:
         """Сохранение или обновление профиля пользователя"""
         try:
             with self.get_connection() as conn:
@@ -210,27 +189,18 @@ class Database:
                     # Обновляем существующий профиль
                     cursor.execute('''
                                    UPDATE user_profiles
-                                   SET telegram_username   = ?,
-                                       telegram_first_name = ?,
-                                       telegram_last_name  = ?,
-                                       first_name          = ?,
-                                       last_name           = ?,
-                                       patronymic          = ?,
-                                       birth_year          = ?,
-                                       city                = ?,
-                                       updated_at          = ?
+                                   SET full_name  = ?,
+                                       city       = ?,
+                                       updated_at = ?
                                    WHERE user_id = ?
-                                   ''', (telegram_username, telegram_first_name, telegram_last_name,
-                                         first_name, last_name, patronymic, birth_year, city, now, user_id))
+                                   ''', (full_name, city, now, user_id))
                 else:
                     # Создаем новый профиль
                     cursor.execute('''
                                    INSERT INTO user_profiles
-                                   (user_id, telegram_username, telegram_first_name, telegram_last_name,
-                                    first_name, last_name, patronymic, birth_year, city, registered_at, updated_at)
-                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                   ''', (user_id, telegram_username, telegram_first_name, telegram_last_name,
-                                         first_name, last_name, patronymic, birth_year, city, now, now))
+                                       (user_id, full_name, city, registered_at, updated_at)
+                                   VALUES (?, ?, ?, ?, ?)
+                                   ''', (user_id, full_name, city, now, now))
 
                 conn.commit()
                 return True
@@ -314,15 +284,7 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                           SELECT p.*,
-                                  u.first_name,
-                                  u.last_name,
-                                  u.patronymic,
-                                  u.birth_year,
-                                  u.city,
-                                  u.telegram_username,
-                                  u.telegram_first_name,
-                                  u.telegram_last_name
+                           SELECT p.*, u.full_name, u.city
                            FROM participants p
                                     JOIN user_profiles u ON p.user_id = u.user_id
                            WHERE p.tournament_id = ?
@@ -381,15 +343,6 @@ def get_user_display_name(user) -> str:
         return f"ID: {user.id}"
 
 
-def get_user_full_info(user_id: int) -> str:
-    """Получение полной информации о пользователе из базы"""
-    profile = db.get_user_profile(user_id)
-    if profile:
-        return (f"{profile['last_name']} {profile['first_name']} {profile['patronymic'] or ''} "
-                f"({profile['birth_year']} г.р., {profile['city']})")
-    return "Неизвестный пользователь"
-
-
 # Вспомогательная функция для проверки прав администратора
 def is_admin(user_id: int) -> bool:
     """Проверка, является ли пользователь администратором"""
@@ -398,29 +351,10 @@ def is_admin(user_id: int) -> bool:
 
 # Функция для логирования действий пользователя
 def log_user_action(user, action: str, details: Dict = None):
-    """Логирование действий пользователя"""
-    user_info = {
-        'user_id': user.id,
-        'username': user.username,
-        'first_name': user.first_name,
-        'last_name': user.last_name,
-        'display_name': get_user_display_name(user)
-    }
-
-    # Получаем данные из профиля, если они есть
-    profile = db.get_user_profile(user.id)
-    if profile:
-        user_info['registered_name'] = f"{profile['last_name']} {profile['first_name']}"
-        user_info['city'] = profile['city']
-        user_info['birth_year'] = profile['birth_year']
-
-    log_message = f"👤 Пользователь: {user_info['display_name']} (ID: {user.id})"
-    if profile:
-        log_message += f" | Данные: {user_info['registered_name']}, {user_info['birth_year']} г.р., {user_info['city']}"
-    log_message += f" | Действие: {action}"
+    """Логирование действий пользователя (упрощено)"""
+    log_message = f"👤 Пользователь: {get_user_display_name(user)} (ID: {user.id}) | Действие: {action}"
     if details:
         log_message += f" | Подробности: {json.dumps(details, ensure_ascii=False)}"
-
     logger.info(log_message)
 
 
@@ -559,8 +493,7 @@ def my_registrations(message):
     if profile:
         profile_text = (
             f"👤 Ваши данные:\n"
-            f"• {profile['last_name']} {profile['first_name']} {profile['patronymic'] or ''}\n"
-            f"• {profile['birth_year']} г.р.\n"
+            f"• {profile['full_name']}\n"
             f"• {profile['city']}\n\n"
         )
     else:
@@ -650,12 +583,7 @@ def callback_handler(call):
                     # Логируем успешную регистрацию
                     log_user_action(user, "register_success", {
                         "tournament_id": tournament_id,
-                        "tournament_name": tournament['name'],
-                        "user_data": {
-                            "last_name": profile['last_name'],
-                            "first_name": profile['first_name'],
-                            "city": profile['city']
-                        }
+                        "tournament_name": tournament['name']
                     })
 
                     bot.answer_callback_query(call.id, "✅ Вы успешно зарегистрировались!")
@@ -666,8 +594,7 @@ def callback_handler(call):
                         f"🏆 Турнир: {tournament['name']}\n"
                         f"📅 Дата: {datetime.fromisoformat(tournament['date']).strftime('%d.%m.%Y')}\n\n"
                         f"Ваши данные:\n"
-                        f"• {profile['last_name']} {profile['first_name']} {profile['patronymic'] or ''}\n"
-                        f"• {profile['birth_year']} г.р.\n"
+                        f"• {profile['full_name']}\n"
                         f"• {profile['city']}"
                     )
 
@@ -691,11 +618,11 @@ def callback_handler(call):
                 })
 
                 temp_registration[user_id] = {'tournament_id': tournament_id}
-                user_states[user_id] = ASKING_LAST_NAME
+                user_states[user_id] = ASKING_FULL_NAME
 
                 bot.edit_message_text(
                     "Для регистрации на турнир мне нужно знать немного информации о вас.\n\n"
-                    "Введите вашу ФАМИЛИЮ:",
+                    "Введите ваше ФИО полностью (например: Иванов Иван Иванович):",
                     call.message.chat.id,
                     call.message.message_id
                 )
@@ -813,12 +740,7 @@ def show_participants(call, tournament_id: int):
 
     if participants:
         for i, p in enumerate(participants, 1):
-            text += f"{i}. {p['last_name']} {p['first_name']} {p['patronymic'] or ''}\n"
-            text += f"   {p['birth_year']} г.р., {p['city']}\n"
-            if p['telegram_username']:
-                text += f"   Telegram: @{p['telegram_username']}\n"
-            reg_date = datetime.fromisoformat(p['registered_at'])
-            text += f"   Зарег.: {reg_date.strftime('%d.%m.%Y %H:%M')}\n\n"
+            text += f"{i}. {p['full_name']} ({p['city']})\n"
     else:
         text += "Пока нет зарегистрированных участников."
 
@@ -846,10 +768,7 @@ def send_participants_to_group(tournament_id: int):
     if participants:
         text += "Список участников:\n"
         for i, p in enumerate(participants, 1):
-            text += f"{i}. {p['last_name']} {p['first_name']} {p['patronymic'] or ''} ({p['birth_year']} г.р., {p['city']})"
-            if p['telegram_username']:
-                text += f" @{p['telegram_username']}"
-            text += "\n"
+            text += f"{i}. {p['full_name']} ({p['city']})\n"
     else:
         text += "Пока нет зарегистрированных участников."
 
@@ -901,7 +820,7 @@ def handle_messages(message):
             date_str = message.text
             date_obj = datetime.strptime(date_str, "%d.%m.%Y")
 
-            # Добавляем время 12:00 для совместимости с форматом ISO
+            # Добавляем время 00:00 для совместимости с форматом ISO
             date_with_time = datetime.combine(date_obj.date(), datetime.min.time()).isoformat()
 
             tournament_name = user_data.get(user_id, {}).get('tournament_name', 'Турнир')
@@ -931,47 +850,13 @@ def handle_messages(message):
             )
 
     # Обработка сбора данных пользователя при первой регистрации
-    elif state == ASKING_LAST_NAME:
-        temp_registration[user_id]['last_name'] = message.text
-        user_states[user_id] = ASKING_FIRST_NAME
+    elif state == ASKING_FULL_NAME:
+        temp_registration[user_id]['full_name'] = message.text
+        user_states[user_id] = ASKING_CITY
 
-        log_user_action(user, "registration_data_entered", {"field": "last_name", "value": message.text})
+        log_user_action(user, "registration_data_entered", {"field": "full_name"})
 
-        bot.reply_to(message, "Введите ваше ИМЯ:")
-
-    elif state == ASKING_FIRST_NAME:
-        temp_registration[user_id]['first_name'] = message.text
-        user_states[user_id] = ASKING_PATRONYMIC
-
-        log_user_action(user, "registration_data_entered", {"field": "first_name", "value": message.text})
-
-        bot.reply_to(message, "Введите ваше ОТЧЕСТВО (если нет, отправьте '-'):")
-
-    elif state == ASKING_PATRONYMIC:
-        patronymic = message.text if message.text != '-' else ''
-        temp_registration[user_id]['patronymic'] = patronymic
-        user_states[user_id] = ASKING_BIRTH_YEAR
-
-        log_user_action(user, "registration_data_entered", {"field": "patronymic", "value": patronymic or "не указано"})
-
-        bot.reply_to(message, "Введите ваш ГОД РОЖДЕНИЯ (например: 1990):")
-
-    elif state == ASKING_BIRTH_YEAR:
-        try:
-            birth_year = int(message.text)
-            current_year = datetime.now().year
-            if birth_year < 1900 or birth_year > current_year:
-                raise ValueError
-
-            temp_registration[user_id]['birth_year'] = birth_year
-            user_states[user_id] = ASKING_CITY
-
-            log_user_action(user, "registration_data_entered", {"field": "birth_year", "value": birth_year})
-
-            bot.reply_to(message, "Введите город, который вы представляете:")
-        except ValueError:
-            log_user_action(user, "registration_invalid_birth_year", {"entered": message.text})
-            bot.reply_to(message, "❌ Пожалуйста, введите корректный год рождения (например: 1990)")
+        bot.reply_to(message, "Введите город, который вы представляете:")
 
     elif state == ASKING_CITY:
         try:
@@ -979,13 +864,7 @@ def handle_messages(message):
             data = temp_registration[user_id]
             success = db.save_user_profile(
                 user_id=user_id,
-                telegram_username=user.username,
-                telegram_first_name=user.first_name,
-                telegram_last_name=user.last_name,
-                first_name=data['first_name'],
-                last_name=data['last_name'],
-                patronymic=data.get('patronymic', ''),
-                birth_year=data['birth_year'],
+                full_name=data['full_name'],
                 city=message.text
             )
 
@@ -1000,13 +879,7 @@ def handle_messages(message):
 
                     log_user_action(user, "registration_complete", {
                         "tournament_id": tournament_id,
-                        "tournament_name": tournament['name'],
-                        "user_data": {
-                            "last_name": data['last_name'],
-                            "first_name": data['first_name'],
-                            "birth_year": data['birth_year'],
-                            "city": message.text
-                        }
+                        "tournament_name": tournament['name']
                     })
 
                     participant_text = (
@@ -1014,8 +887,7 @@ def handle_messages(message):
                         f"🏆 Турнир: {tournament['name']}\n"
                         f"📅 Дата: {datetime.fromisoformat(tournament['date']).strftime('%d.%m.%Y')}\n\n"
                         f"Ваши данные сохранены:\n"
-                        f"• {profile['last_name']} {profile['first_name']} {profile['patronymic'] or ''}\n"
-                        f"• {profile['birth_year']} г.р.\n"
+                        f"• {profile['full_name']}\n"
                         f"• {profile['city']}"
                     )
 
@@ -1042,10 +914,12 @@ def handle_messages(message):
             log_user_action(user, "registration_error", {"error": str(e)})
             bot.reply_to(message, "❌ Произошла ошибка при сохранении данных. Попробуйте позже.")
 
+
 def signal_term_handler(sig_num, frame):
     """Обработка сигнала о прерывание процесса"""
-    logger.info('Бот остановлен сигналом: %s; frame: %s',sig_num, frame)
+    logger.info('Бот остановлен сигналом: %s; frame: %s', sig_num, frame)
     bot.stop_polling()
+
 
 # Запуск бота
 if __name__ == '__main__':
@@ -1055,5 +929,5 @@ if __name__ == '__main__':
 
     signal.signal(signal.SIGTERM, signal_term_handler)
 
-    bot.polling(none_stop=True, timeout=POLLING_TIMEOUT)
+    bot.infinity_polling(none_stop=True, timeout=POLLING_TIMEOUT)
     logger.info('Бот остановлен')
