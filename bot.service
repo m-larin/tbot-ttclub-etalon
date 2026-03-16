@@ -4,9 +4,10 @@ After=multi-user.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/btlab_bot
-ExecStart=/opt/btlab_bot/venv/bin/python3 bot.py
+WorkingDirectory=/opt/bot/tbot-ttclub-etalon
+ExecStart=/opt/bot/tbot-ttclub-etalon/.venv/bin/python bot.py
 Restart=on-abort
+User=tbot
 
 [Install]
 WantedBy=multi-user.target
