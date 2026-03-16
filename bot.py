@@ -33,11 +33,13 @@ ADDING_TOURNAMENT_NAME = 1
 ADDING_TOURNAMENT_DATE = 2
 ASKING_FULL_NAME = 3
 ASKING_CITY = 4
+CONFIRM_CANCEL = 5  # Новое состояние для подтверждения отмены
 
 # Хранилище состояний и данных пользователей
 user_states = {}
 user_data = {}
 temp_registration = {}  # Временное хранение данных регистрации
+cancel_data = {}  # Временное хранение данных для отмены
 
 
 # Класс для работы с базой данных
@@ -198,6 +200,22 @@ class Database:
             logger.error(f"Ошибка при регистрации: {e}")
             return False
 
+    def cancel_registration(self, registration_id: int, registered_by: int) -> bool:
+        """Отмена регистрации участника (только свои регистрации)"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                # Проверяем, что регистрация принадлежит этому пользователю
+                cursor.execute(
+                    "DELETE FROM participants WHERE id = ? AND registered_by = ?",
+                    (registration_id, registered_by)
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Ошибка при отмене регистрации: {e}")
+            return False
+
     def get_participants(self, tournament_id: int) -> List[Dict]:
         """Получение списка участников турнира"""
         with self.get_connection() as conn:
@@ -219,9 +237,9 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                           SELECT t.*, p.full_name, p.city, p.registered_at as reg_date
-                           FROM tournaments t
-                                    JOIN participants p ON t.id = p.tournament_id
+                           SELECT p.*, t.name as tournament_name, t.date as tournament_date
+                           FROM participants p
+                                    JOIN tournaments t ON p.tournament_id = t.id
                            WHERE p.registered_by = ?
                              AND t.is_active = 1
                              AND t.date >= date ('now')
@@ -291,6 +309,7 @@ def start(message):
         "📝 /register - зарегистрировать участника на турнир\n"
         "👥 /participants - посмотреть участников турнира\n"
         "✅ /my_registrations - показать мои регистрации\n"
+        "❌ /cancel_registration - отменить свою регистрацию\n"
         "ℹ️ /help - показать справку\n\n"
     )
 
@@ -321,6 +340,7 @@ def help_command(message):
         "/register - зарегистрировать участника на турнир\n"
         "/participants - посмотреть участников турнира\n"
         "/my_registrations - ваши регистрации\n"
+        "/cancel_registration - отменить свою регистрацию\n"
         "/help - эта справка\n\n"
     )
 
@@ -401,14 +421,46 @@ def my_registrations(message):
     current_tournament = None
 
     for reg in registrations:
-        if current_tournament != reg['name']:
-            current_tournament = reg['name']
-            date_obj = datetime.fromisoformat(reg['date'])
-            text += f"\n🏆 {reg['name']} ({date_obj.strftime('%d.%m.%Y')}):\n"
+        if current_tournament != reg['tournament_name']:
+            current_tournament = reg['tournament_name']
+            date_obj = datetime.fromisoformat(reg['tournament_date'])
+            text += f"\n🏆 {reg['tournament_name']} ({date_obj.strftime('%d.%m.%Y')}):\n"
 
         text += f"   • {reg['full_name']} ({reg['city']})\n"
 
     bot.reply_to(message, text)
+
+
+@bot.message_handler(commands=['cancel_registration'])
+def cancel_registration_start(message):
+    """Показать список регистраций для отмены"""
+    user = message.from_user
+    user_id = user.id
+    registrations = db.get_user_registrations(user_id)
+
+    # Логируем действие
+    log_user_action(user, "cancel_registration_start", {"registrations_count": len(registrations)})
+
+    if not registrations:
+        bot.reply_to(message, "📭 У вас нет активных регистраций для отмены.")
+        return
+
+    keyboard = types.InlineKeyboardMarkup()
+    for reg in registrations:
+        date_obj = datetime.fromisoformat(reg['tournament_date'])
+        button_text = f"{reg['tournament_name']} ({date_obj.strftime('%d.%m.%Y')}) - {reg['full_name']}"
+        callback_data = f"cancel_{reg['id']}"
+        button = types.InlineKeyboardButton(button_text, callback_data=callback_data)
+        keyboard.add(button)
+
+    cancel_all_button = types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_all")
+    keyboard.add(cancel_all_button)
+
+    bot.send_message(
+        message.chat.id,
+        "Выберите регистрацию для отмены:",
+        reply_markup=keyboard
+    )
 
 
 @bot.message_handler(commands=['add_tournament'])
@@ -497,6 +549,7 @@ def callback_handler(call):
                 call.message.message_id
             )
 
+        # Обработка просмотра участников
         elif data.startswith('view_'):
             tournament_id = int(data.split('_')[1])
             tournament = db.get_tournament(tournament_id)
@@ -508,6 +561,83 @@ def callback_handler(call):
 
             show_participants(call, tournament_id)
 
+        # Обработка отмены регистрации
+        elif data.startswith('cancel_') and data != 'cancel_all' and not data.startswith('cancel_confirm_'):
+            registration_id = int(data.split('_')[1])
+
+            # Запрашиваем подтверждение
+            cancel_data[user_id] = {'registration_id': registration_id}
+            user_states[user_id] = CONFIRM_CANCEL
+
+            keyboard = types.InlineKeyboardMarkup()
+            yes_button = types.InlineKeyboardButton("✅ Да, отменить", callback_data=f"cancel_confirm_{registration_id}")
+            no_button = types.InlineKeyboardButton("❌ Нет, оставить", callback_data="cancel_all")
+            keyboard.add(yes_button, no_button)
+
+            bot.edit_message_text(
+                "Вы уверены, что хотите отменить эту регистрацию?",
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=keyboard
+            )
+
+        elif data.startswith('cancel_confirm_'):
+            registration_id = int(data.split('_')[2])
+
+            # Отменяем регистрацию
+            success = db.cancel_registration(registration_id, user_id)
+
+            if success:
+                log_user_action(user, "cancel_registration_success", {
+                    "registration_id": registration_id
+                })
+
+                bot.answer_callback_query(call.id, "✅ Регистрация отменена!")
+                bot.edit_message_text(
+                    "✅ Регистрация успешно отменена.",
+                    call.message.chat.id,
+                    call.message.message_id
+                )
+
+                # Получаем информацию о турнире для отправки обновления в группу
+                # Для этого нужно найти tournament_id по registration_id
+                # В реальном коде лучше сделать отдельный метод в БД
+                registrations = db.get_user_registrations(user_id)
+                tournament_id = None
+                for reg in registrations:
+                    if reg['id'] == registration_id:
+                        tournament_id = reg['tournament_id']
+                        break
+
+                if tournament_id:
+                    send_participants_to_group(tournament_id)
+            else:
+                log_user_action(user, "cancel_registration_failed", {
+                    "registration_id": registration_id
+                })
+                bot.answer_callback_query(call.id, "❌ Не удалось отменить регистрацию.")
+
+            # Очищаем временные данные
+            if user_id in user_states:
+                del user_states[user_id]
+            if user_id in cancel_data:
+                del cancel_data[user_id]
+
+        elif data == "cancel_all":
+            # Отмена действия
+            if user_id in user_states:
+                del user_states[user_id]
+            if user_id in cancel_data:
+                del cancel_data[user_id]
+
+            bot.answer_callback_query(call.id, "❌ Действие отменено.")
+            bot.edit_message_text(
+                "❌ Действие отменено.",
+                call.message.chat.id,
+                call.message.message_id
+            )
+
+        # Обработка удаления турнира (админ)
         elif data.startswith('del_'):
             # Проверяем права администратора
             if not is_admin(user_id):
@@ -753,6 +883,11 @@ def handle_messages(message):
                 del user_states[user_id]
             if user_id in temp_registration:
                 del temp_registration[user_id]
+
+    # Обработка подтверждения отмены регистрации
+    elif state == CONFIRM_CANCEL:
+        # Этот случай обрабатывается в callback_handler
+        pass
 
 
 def signal_term_handler(sig_num, frame):
