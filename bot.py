@@ -682,7 +682,7 @@ def send_tournament_info_to_group(tournament_id: int) -> None:
 def get_group_message_markup():
     """Формирование кнопки с открытием бота в сообщение группе"""
     keyboard = types.InlineKeyboardMarkup(keyboard=[
-        [types.InlineKeyboardButton(text="Регистрация", url="t.me/ttc_etalon_bot")]
+        [types.InlineKeyboardButton(text="Регистрация тут!", url="t.me/ttc_etalon_bot")]
     ])
     return keyboard
 
@@ -776,6 +776,8 @@ def handle_tournament_date_input(user_id: int, message: types.Message) -> None:
 
         user_states.pop(user_id, None)
         user_data.pop(user_id, None)
+
+        send_tournament_info_to_group(tournament_id)
 
     except ValueError:
         log_user_action(message.from_user, "add_tournament_invalid_date", {"entered_date": message.text})
