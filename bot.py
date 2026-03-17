@@ -2,10 +2,9 @@ import telebot
 from telebot import types
 import sqlite3
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Generator
 from contextlib import contextmanager
 import logging
-import time
 import signal
 import json
 from instance.config import (
@@ -41,7 +40,6 @@ user_data = {}
 temp_registration = {}  # Временное хранение данных регистрации
 cancel_data = {}  # Временное хранение данных для отмены
 
-
 # Класс для работы с базой данных
 class Database:
     def __init__(self, db_name: str = DB_FILE):
@@ -49,7 +47,7 @@ class Database:
         self.init_db()
 
     @contextmanager
-    def get_connection(self):
+    def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(self.db_name)
         conn.row_factory = sqlite3.Row
         try:
@@ -59,6 +57,7 @@ class Database:
 
     def init_db(self):
         """Инициализация таблиц в базе данных"""
+        # noinspection PyArgumentList
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -139,6 +138,7 @@ class Database:
     # Методы для работы с турнирами
     def add_tournament(self, name: str, date: str, created_by: int) -> int:
         """Добавление нового турнира"""
+        # noinspection PyArgumentList
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -150,6 +150,7 @@ class Database:
 
     def get_tournaments(self, only_active: bool = True) -> List[Dict]:
         """Получение списка турниров"""
+        # noinspection PyArgumentList
         with self.get_connection() as conn:
             cursor = conn.cursor()
             if only_active:
@@ -166,6 +167,7 @@ class Database:
 
     def get_tournament(self, tournament_id: int) -> Optional[Dict]:
         """Получение информации о турнире"""
+        # noinspection PyArgumentList
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM tournaments WHERE id = ?", (tournament_id,))
@@ -174,6 +176,7 @@ class Database:
 
     def delete_tournament(self, tournament_id: int):
         """Удаление турнира (мягкое удаление)"""
+        # noinspection PyArgumentList
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -186,6 +189,7 @@ class Database:
                              full_name: str, city: str) -> bool:
         """Регистрация участника на турнир"""
         try:
+            # noinspection PyArgumentList
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
@@ -203,6 +207,7 @@ class Database:
     def cancel_registration(self, registration_id: int, registered_by: int) -> bool:
         """Отмена регистрации участника (только свои регистрации)"""
         try:
+            # noinspection PyArgumentList
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 # Проверяем, что регистрация принадлежит этому пользователю
@@ -218,6 +223,7 @@ class Database:
 
     def get_participants(self, tournament_id: int) -> List[Dict]:
         """Получение списка участников турнира"""
+        # noinspection PyArgumentList
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -234,6 +240,7 @@ class Database:
 
     def get_user_registrations(self, registered_by: int) -> List[Dict]:
         """Получение списка регистраций, сделанных пользователем"""
+        # noinspection PyArgumentList
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -253,6 +260,7 @@ class Database:
 
     def get_registration_count(self, tournament_id: int) -> int:
         """Получение количества участников на турнире"""
+        # noinspection PyArgumentList
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -261,6 +269,18 @@ class Database:
             )
             row = cursor.fetchone()
             return row['count'] if row else 0
+
+    def get_tournament_id_by_registration(self, registration_id: int) -> Optional[int]:
+        """Получение ID турнира по ID регистрации"""
+        # noinspection PyArgumentList
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT tournament_id FROM participants WHERE id = ?",
+                (registration_id,)
+            )
+            row = cursor.fetchone()
+            return row['tournament_id'] if row else None
 
 
 # Инициализация бота и базы данных
@@ -392,16 +412,19 @@ def participants_command(message):
         bot.reply_to(message, "Нет активных турниров.")
         return
 
+    keyboard = get_tournaments_keyboard(tournaments_list, "view")
+
+    bot.send_message(message.chat.id, "👥 Выберите турнир для просмотра участников:", reply_markup=keyboard)
+
+def get_tournaments_keyboard(tournaments_list, callback_data_prefix):
     keyboard = types.InlineKeyboardMarkup()
     for tournament in tournaments_list:
         date_obj = datetime.fromisoformat(tournament['date'])
         count = db.get_registration_count(tournament['id'])
         button_text = f"{tournament['name']} ({date_obj.strftime('%d.%m.%Y')}) - {count} уч."
-        button = types.InlineKeyboardButton(button_text, callback_data=f"view_{tournament['id']}")
+        button = types.InlineKeyboardButton(button_text, callback_data=f"{callback_data_prefix}_{tournament['id']}")
         keyboard.add(button)
-
-    bot.send_message(message.chat.id, "👥 Выберите турнир для просмотра участников:", reply_markup=keyboard)
-
+    return keyboard
 
 @bot.message_handler(commands=['my_registrations'])
 def my_registrations(message):
@@ -497,13 +520,7 @@ def delete_tournament_start(message):
         bot.reply_to(message, "Нет активных турниров для удаления.")
         return
 
-    keyboard = types.InlineKeyboardMarkup()
-    for tournament in tournaments_list:
-        date_obj = datetime.fromisoformat(tournament['date'])
-        count = db.get_registration_count(tournament['id'])
-        button_text = f"{tournament['name']} ({date_obj.strftime('%d.%m.%Y')}) - {count} уч."
-        button = types.InlineKeyboardButton(button_text, callback_data=f"del_{tournament['id']}")
-        keyboard.add(button)
+    keyboard = get_tournaments_keyboard(tournaments_list, "del")
 
     cancel_button = types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete")
     keyboard.add(cancel_button)
@@ -584,6 +601,9 @@ def callback_handler(call):
         elif data.startswith('cancel_confirm_'):
             registration_id = int(data.split('_')[2])
 
+            # Получаем ID турнира до отмены регистрации
+            tournament_id = db.get_tournament_id_by_registration(registration_id)
+
             # Отменяем регистрацию
             success = db.cancel_registration(registration_id, user_id)
 
@@ -599,16 +619,7 @@ def callback_handler(call):
                     call.message.message_id
                 )
 
-                # Получаем информацию о турнире для отправки обновления в группу
-                # Для этого нужно найти tournament_id по registration_id
-                # В реальном коде лучше сделать отдельный метод в БД
-                registrations = db.get_user_registrations(user_id)
-                tournament_id = None
-                for reg in registrations:
-                    if reg['id'] == registration_id:
-                        tournament_id = reg['tournament_id']
-                        break
-
+                # Отправляем обновленный список в группу, если знаем ID турнира
                 if tournament_id:
                     send_participants_to_group(tournament_id)
             else:
@@ -904,5 +915,6 @@ if __name__ == '__main__':
 
     signal.signal(signal.SIGTERM, signal_term_handler)
 
-    bot.infinity_polling(none_stop=True, timeout=POLLING_TIMEOUT)
+    # Используем infinity_polling для бесконечного опроса
+    bot.infinity_polling(timeout=POLLING_TIMEOUT, logger_level=logging.INFO)
     logger.info('Бот остановлен')
