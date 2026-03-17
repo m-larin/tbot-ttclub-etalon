@@ -650,12 +650,41 @@ def send_participants_to_group(tournament_id: int) -> None:
         bot.send_message(
             chat_id=GROUP_CHAT_ID,
             text=text,
-            parse_mode='HTML'
+            parse_mode='HTML',
+            reply_markup=get_group_message_markup()
         )
         logger.info("Отправлено обновление участников в группу для турнира %s", tournament['name'])
     except Exception as e:
         logger.error("Ошибка при отправке в группу: %s", e)
 
+def send_tournament_info_to_group(tournament_id: int) -> None:
+    """Отправка информации о созданном турнире в группу"""
+    tournament = db.get_tournament(tournament_id)
+    if not tournament:
+        return
+
+    date_obj = datetime.fromisoformat(tournament['date'])
+    text = "📢 <b>Начата запись на турнир!</b>\n\n"
+    text += f"🏆 Турнир: {tournament['name']}\n"
+    text += f"📅 Дата: {date_obj.strftime('%d.%m.%Y')}\n"
+
+    try:
+        bot.send_message(
+            chat_id=GROUP_CHAT_ID,
+            text=text,
+            parse_mode='HTML',
+            reply_markup=get_group_message_markup()
+        )
+        logger.info("Отправлена информация о начале записи на турнир в группу для турнира %s", tournament['name'])
+    except Exception as e:
+        logger.error("Ошибка при отправке в группу: %s", e)
+
+def get_group_message_markup():
+    """Формирование кнопки с открытием бота в сообщение группе"""
+    keyboard = types.InlineKeyboardMarkup(keyboard=[
+        [types.InlineKeyboardButton(text="Регистрация", url="t.me/ttc_etalon_bot")]
+    ])
+    return keyboard
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call: types.CallbackQuery) -> None:
