@@ -664,7 +664,7 @@ def send_tournament_info_to_group(tournament_id: int) -> None:
         return
 
     date_obj = datetime.fromisoformat(tournament['date'])
-    text = "📢 <b>Начата запись на турнир!</b>\n\n"
+    text = "📢 <b>Началась запись на турнир!</b>\n\n"
     text += f"🏆 Турнир: {tournament['name']}\n"
     text += f"📅 Дата: {date_obj.strftime('%d.%m.%Y')}\n"
 
