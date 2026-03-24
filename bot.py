@@ -293,7 +293,7 @@ def handle_registration_callback(call: types.CallbackQuery, data: str, user_id: 
     user_states[user_id] = ASKING_FULL_NAME
 
     bot.edit_message_text(
-        "Введите ФИО участника (например: Иванов Иван Иванович):",
+        "Введите ФИО участника, в случае парного турнира введите ФИО обоих участников:",
         call.message.chat.id,
         call.message.message_id
     )
@@ -796,7 +796,7 @@ def handle_full_name_input(user_id: int, message: types.Message) -> None:
 
     log_user_action(message.from_user, "participant_data_entered", {"field": "full_name"})
 
-    bot.reply_to(message, "Введите город, который представляет участник:")
+    bot.reply_to(message, "Введите город(а), который представляет участник(и):")
 
 
 def handle_city_input(user_id: int, message: types.Message) -> None:
