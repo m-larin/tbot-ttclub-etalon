@@ -165,7 +165,7 @@ async def main() -> None:
                 pass
         if max_bot:
             try:
-                await max_bot.close()
+                await max_bot.close_session()
             except Exception:
                 pass
         logger.info("✅ Боты остановлены")
