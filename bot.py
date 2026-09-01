@@ -1,15 +1,17 @@
 # bot.py
+"""
+Бот регистрации на турнир. Позволяет выполнять операции из двух мессенджеров MAX и Telegram
+"""
 import asyncio
 import logging
-import signal
-import sys
-from telebot.async_telebot import AsyncTeleBot
-from telebot.types import BotCommand as TgBotCommand
+
 from maxapi import Bot as MaxBot, Dispatcher
 from maxapi.types import BotCommand as MaxBotCommand
+from telebot.async_telebot import AsyncTeleBot
+from telebot.types import BotCommand as TgBotCommand
 
-from database.db import Database
 from context import init_context
+from database.db import Database
 from handlers import (
     common_max_router,
     admin_max_router,
@@ -38,29 +40,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Глобальные переменные
-db = Database(DB_FILE)
-tg_bot = None
-max_bot = None
-TG_BOT_USERNAME = None
-MAX_BOT_USERNAME = None
-
-def create_tg_bot():
+def create_tg_bot() -> AsyncTeleBot:
     """Создание Telegram бота."""
-    global tg_bot, TG_BOT_USERNAME
-    tg_bot = AsyncTeleBot(TELEGRAM_TOKEN)
-    return tg_bot
+    return AsyncTeleBot(TELEGRAM_TOKEN)
 
-async def init_max_bot():
+
+async def init_max_bot() -> MaxBot:
     """Создание MAX бота."""
-    global max_bot, MAX_BOT_USERNAME
     max_bot = MaxBot(token=MAX_TOKEN)
     me = await max_bot.get_me()
-    MAX_BOT_USERNAME = me.username
-    logger.info(f"🤖 MAX бот: @{MAX_BOT_USERNAME}")
+    logger.info("🤖 MAX бот: @%s", me.username)
     return max_bot
 
-async def set_tg_commands():
+
+async def set_tg_commands(tg_bot: AsyncTeleBot) -> None:
     """Установка меню команд для Telegram."""
     commands = [
         TgBotCommand("register", "📝 Зарегистрировать участника на турнир"),
@@ -76,9 +69,10 @@ async def set_tg_commands():
         await tg_bot.set_my_commands(commands)
         logger.info("✅ Установлены команды для Telegram")
     except Exception as e:
-        logger.error(f"❌ Ошибка установки команд Telegram: {e}")
+        logger.error("❌ Ошибка установки команд Telegram: %s", e)
 
-async def set_max_commands():
+
+async def set_max_commands(max_bot: MaxBot) -> None:
     """Установка меню команд для MAX."""
     commands = [
         MaxBotCommand(name="register", description="📝 Зарегистрировать участника на турнир"),
@@ -94,63 +88,57 @@ async def set_max_commands():
         await max_bot.set_commands(*commands)
         logger.info("✅ Установлены команды для MAX")
     except Exception as e:
-        logger.error(f"❌ Ошибка установки команд MAX: {e}")
+        logger.error("❌ Ошибка установки команд MAX: %s", e)
 
-def register_tg_handlers():
-    """Регистрация обработчиков для Telegram."""
-    register_tg_registration()
-    register_tg_admin()
 
-def register_max_handlers():
-    """Регистрация обработчиков для MAX."""
-    register_common_max()
-    register_admin_max()
-    register_registration_max()
-
-async def run_tg_polling():
+async def run_tg_polling(tg_bot: AsyncTeleBot) -> None:
     """Запуск polling для Telegram."""
     logger.info("🚀 Запуск Telegram polling...")
     await tg_bot.polling(non_stop=True, request_timeout=60)
 
-async def run_max_polling(dp: Dispatcher):
+
+async def run_max_polling(max_bot: MaxBot, dp: Dispatcher) -> None:
     """Запуск polling для MAX."""
     logger.info("🚀 Запуск MAX polling...")
     await dp.start_polling(max_bot)
 
-async def main():
+
+async def main() -> None:
     """Главная функция запуска обоих ботов."""
-    global tg_bot, max_bot, TG_BOT_USERNAME, MAX_BOT_USERNAME
-    
     # Инициализация базы данных
+    db = Database(DB_FILE)
     await db.init_db()
     logger.info("✅ База данных инициализирована")
-    
+
     # Создаем Telegram бота
     tg_bot = create_tg_bot()
     tg_info = await tg_bot.get_me()
-    TG_BOT_USERNAME = tg_info.username
-    logger.info(f"🤖 Telegram бот: @{TG_BOT_USERNAME}")
-    await set_tg_commands()
-    
+    tg_username = tg_info.username
+    logger.info("🤖 Telegram бот: @%s", tg_username)
+    await set_tg_commands(tg_bot)
+
     # Создаем MAX бота
-    await init_max_bot()
-    await set_max_commands()
-    
+    max_bot = await init_max_bot()
+    await set_max_commands(max_bot)
+
     # Инициализируем глобальный контекст
     init_context(
         db=db,
         tg_bot=tg_bot,
         max_bot=max_bot,
-        tg_username=TG_BOT_USERNAME,
-        max_username=MAX_BOT_USERNAME
+        tg_username=tg_username,
+        max_username=(await max_bot.get_me()).username
     )
-    
+
     # Регистрируем обработчики для Telegram
-    register_tg_handlers()
-    
+    register_tg_registration()
+    register_tg_admin()
+
     # Регистрируем обработчики для MAX
-    register_max_handlers()
-    
+    register_common_max()
+    register_admin_max()
+    register_registration_max()
+
     # Создаем диспетчер для MAX и подключаем роутеры
     dp = Dispatcher()
     dp.include_routers(
@@ -158,32 +146,33 @@ async def main():
         admin_max_router,
         registration_max_router
     )
-    
+
     logger.info("🚀 Бот запущен! Нажмите Ctrl+C для остановки")
-    
+
     try:
-        tg_task = asyncio.create_task(run_tg_polling())
-        max_task = asyncio.create_task(run_max_polling(dp))
+        tg_task = asyncio.create_task(run_tg_polling(tg_bot))
+        max_task = asyncio.create_task(run_max_polling(max_bot, dp))
         await asyncio.gather(tg_task, max_task, return_exceptions=True)
     except KeyboardInterrupt:
         logger.info("👋 Остановка по Ctrl+C")
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        logger.error("❌ Ошибка: %s", e)
     finally:
         if tg_bot:
             try:
                 await tg_bot.close()
-            except:
+            except Exception:
                 pass
         if max_bot:
             try:
                 await max_bot.close()
-            except:
+            except Exception:
                 pass
         logger.info("✅ Боты остановлены")
+
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("👋 Бот остановлен") 
+        logger.info("👋 Бот остановлен")

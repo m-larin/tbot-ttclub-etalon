@@ -13,62 +13,64 @@ from database.db import Database
 logger = logging.getLogger(__name__)
 
 # Глобальные переменные
-_db: Optional[Database] = None
-_tg_bot: Optional[AsyncTeleBot] = None
-_max_bot: Optional[MaxBot] = None
-_tg_bot_username: Optional[str] = None
-_max_bot_username: Optional[str] = None
+_DB: Optional[Database] = None
+_TG_BOT: Optional[AsyncTeleBot] = None
+_MAX_BOT: Optional[MaxBot] = None
+_TG_BOT_USERNAME: Optional[str] = None
+_MAX_BOT_USERNAME: Optional[str] = None
 
-def init_context(db: Database, tg_bot: AsyncTeleBot, max_bot: MaxBot, tg_username: str, max_username: str):
+
+def init_context(db: Database, tg_bot: AsyncTeleBot, max_bot: MaxBot,
+                 tg_username: str, max_username: str) -> None:
     """
     Инициализация глобального контекста.
     Вызывается один раз при запуске бота.
     """
-    global _db, _tg_bot, _max_bot, _tg_bot_username, _max_bot_username
-    
-    _db = db
-    _tg_bot = tg_bot
-    _max_bot = max_bot
-    _tg_bot_username = tg_username
-    _max_bot_username = max_username
-    
+    # Используем globals() вместо global для избежания предупреждения
+    globals().update({
+        '_DB': db,
+        '_TG_BOT': tg_bot,
+        '_MAX_BOT': max_bot,
+        '_TG_BOT_USERNAME': tg_username,
+        '_MAX_BOT_USERNAME': max_username,
+    })
+
     logger.info("✅ Контекст инициализирован")
-    logger.info(f"   Telegram бот: @{_tg_bot_username}")
-    logger.info(f"   MAX бот: @{_max_bot_username}")
+    # Используем % форматирование вместо f-string
+    logger.info("   Telegram бот: @%s", tg_username)
+    logger.info("   MAX бот: @%s", max_username)
+
 
 def get_db() -> Database:
     """Получение экземпляра базы данных."""
-    if _db is None:
+    if _DB is None:
         raise RuntimeError("Контекст не инициализирован. Вызовите init_context()")
-    return _db
+    return _DB
+
 
 def get_tg_bot() -> AsyncTeleBot:
     """Получение экземпляра Telegram бота."""
-    if _tg_bot is None:
+    if _TG_BOT is None:
         raise RuntimeError("Контекст не инициализирован. Вызовите init_context()")
-    return _tg_bot
+    return _TG_BOT
+
 
 def get_max_bot() -> MaxBot:
     """Получение экземпляра MAX бота."""
-    if _max_bot is None:
+    if _MAX_BOT is None:
         raise RuntimeError("Контекст не инициализирован. Вызовите init_context()")
-    return _max_bot
+    return _MAX_BOT
+
 
 def get_tg_username() -> str:
     """Получение username Telegram бота."""
-    if _tg_bot_username is None:
+    if _TG_BOT_USERNAME is None:
         raise RuntimeError("Контекст не инициализирован. Вызовите init_context()")
-    return _tg_bot_username
+    return _TG_BOT_USERNAME
+
 
 def get_max_username() -> str:
     """Получение username MAX бота."""
-    if _max_bot_username is None:
+    if _MAX_BOT_USERNAME is None:
         raise RuntimeError("Контекст не инициализирован. Вызовите init_context()")
-    return _max_bot_username
-
-# Для удобства можно использовать свойства
-db = property(get_db)
-tg_bot = property(get_tg_bot)
-max_bot = property(get_max_bot)
-tg_username = property(get_tg_username)
-max_username = property(get_max_username)
+    return _MAX_BOT_USERNAME
