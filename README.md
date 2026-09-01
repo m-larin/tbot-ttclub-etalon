@@ -32,6 +32,8 @@ pip install -r requirements.txt
 cp instance/config.py.example instance/config.py
 groupadd -r tbot
 useradd -r -g tbot -d /opt/bot -s /sbin/nologin tbot
+mkdir data
+chmod tbot:tbot data
 ````
 
 Внести правки в конфиг файл instance/config.py
