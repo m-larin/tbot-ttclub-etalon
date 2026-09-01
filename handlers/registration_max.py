@@ -114,7 +114,7 @@ async def process_city(event: MessageCreated, context: MemoryContext):
         
         # Отправляем обновление в оба мессенджера
         participants = await db.get_participants(tournament_id)
-        text = f"📢 <b>Обновление списка участников!</b>\n\n🏆 {tournament['name']}\n👥 Всего: {len(participants)}\n\n"
+        text = f"📢 <b>Обновление списка участников!</b>\n\n🏆 {tournament['name']}\n📅 {date_obj.strftime('%d.%m.%Y')}\n👥 Всего: {len(participants)}\n\n"
         for i, p in enumerate(participants, 1):
             text += f"{i}. {p['full_name']} ({p['city']})\n"
         
@@ -246,8 +246,9 @@ async def process_cancel_confirm(event: MessageCallback, payload: CancelConfirmP
         
         if tournament_id:
             tournament = await db.get_tournament(tournament_id)
+            date_obj = datetime.fromisoformat(tournament['date'])
             participants = await db.get_participants(tournament_id)
-            text = f"📢 <b>Обновление списка участников!</b>\n\n🏆 {tournament['name']}\n👥 Всего: {len(participants)}\n\n"
+            text = f"📢 <b>Обновление списка участников!</b>\n\n🏆 {tournament['name']}\n📅 {date_obj.strftime('%d.%m.%Y')}\n👥 Всего: {len(participants)}\n\n"
             for i, p in enumerate(participants, 1):
                 text += f"{i}. {p['full_name']} ({p['city']})\n"
             

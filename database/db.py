@@ -1,134 +1,114 @@
 # database/db.py
 import sqlite3
 import asyncio
+import os
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-import logging
 
 logger = logging.getLogger(__name__)
 
-
 class Database:
     def __init__(self, db_name: str = "tournaments.db"):
-        self.db_name = db_name
+        # Определяем путь к БД
+        if os.path.isabs(db_name):
+            self.db_name = db_name
+        else:
+            # Получаем директорию проекта
+            current_dir = os.path.dirname(os.path.abspath(__file__))  # database/
+            project_dir = os.path.dirname(current_dir)                # корень проекта
+            
+            # Создаем поддиректорию data, если её нет
+            data_dir = os.path.join(project_dir, "data")
+            os.makedirs(data_dir, exist_ok=True)
+            
+            self.db_name = os.path.join(data_dir, db_name)
+        
+        self._lock = asyncio.Lock()
+        logger.info(f"📁 Путь к БД: {self.db_name}")
 
     async def _execute(self, query: str, params: tuple = (), fetchone: bool = False, fetchall: bool = False):
-        """Асинхронная обертка для выполнения SQL-запросов."""
-
-        def _sync_execute():
-            conn = sqlite3.connect(self.db_name)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(query, params)
-            if fetchone:
-                result = cursor.fetchone()
-            elif fetchall:
-                result = cursor.fetchall()
-            else:
-                result = None
-            conn.commit()
-            conn.close()
-            return result
-
-        return await asyncio.to_thread(_sync_execute)
+        """Асинхронная обертка для выполнения SQL-запросов с блокировкой."""
+        
+        async with self._lock:
+            def _sync_execute():
+                conn = None
+                try:
+                    conn = sqlite3.connect(self.db_name, timeout=30.0)
+                    conn.row_factory = sqlite3.Row
+                    
+                    # Включаем WAL-режим для лучшей конкурентности
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA synchronous=NORMAL")
+                    
+                    cursor = conn.cursor()
+                    cursor.execute(query, params)
+                    
+                    if fetchone:
+                        result = cursor.fetchone()
+                    elif fetchall:
+                        result = cursor.fetchall()
+                    else:
+                        result = None
+                    
+                    conn.commit()
+                    logger.info(f"✅ Выполнен запрос: {query[:100]}...")
+                    return result
+                    
+                except sqlite3.OperationalError as e:
+                    logger.error(f"❌ Ошибка SQLite: {e}")
+                    logger.error(f"   Запрос: {query[:100]}...")
+                    logger.error(f"   Файл БД: {self.db_name}")
+                    raise
+                finally:
+                    if conn:
+                        conn.close()
+            
+            return await asyncio.to_thread(_sync_execute)
 
     async def init_db(self):
         """Инициализация таблиц."""
         await self._execute('''
-                            CREATE TABLE IF NOT EXISTS tournaments
-                            (
-                                id
-                                INTEGER
-                                PRIMARY
-                                KEY
-                                AUTOINCREMENT,
-                                name
-                                TEXT
-                                NOT
-                                NULL,
-                                date
-                                TEXT
-                                NOT
-                                NULL,
-                                created_at
-                                TEXT
-                                NOT
-                                NULL,
-                                created_by
-                                INTEGER
-                                NOT
-                                NULL,
-                                is_active
-                                INTEGER
-                                DEFAULT
-                                1
-                            )
-                            ''')
+            CREATE TABLE IF NOT EXISTS tournaments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                date TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                created_by INTEGER NOT NULL,
+                is_active INTEGER DEFAULT 1
+            )
+        ''')
         await self._execute('''
-                            CREATE TABLE IF NOT EXISTS participants
-                            (
-                                id
-                                INTEGER
-                                PRIMARY
-                                KEY
-                                AUTOINCREMENT,
-                                tournament_id
-                                INTEGER
-                                NOT
-                                NULL,
-                                registered_by
-                                INTEGER
-                                NOT
-                                NULL,
-                                full_name
-                                TEXT
-                                NOT
-                                NULL,
-                                city
-                                TEXT
-                                NOT
-                                NULL,
-                                registered_at
-                                TEXT
-                                NOT
-                                NULL,
-                                FOREIGN
-                                KEY
-                            (
-                                tournament_id
-                            ) REFERENCES tournaments
-                            (
-                                id
-                            ) ON DELETE CASCADE
-                                )
-                            ''')
+            CREATE TABLE IF NOT EXISTS participants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tournament_id INTEGER NOT NULL,
+                registered_by INTEGER NOT NULL,
+                full_name TEXT NOT NULL,
+                city TEXT NOT NULL,
+                registered_at TEXT NOT NULL,
+                FOREIGN KEY (tournament_id) REFERENCES tournaments (id) ON DELETE CASCADE
+            )
+        ''')
         logger.info("✅ База данных инициализирована")
 
     async def add_tournament(self, name: str, date: str, created_by: int) -> int:
         """Добавление нового турнира."""
         try:
-            # Вставляем запись
             query = "INSERT INTO tournaments (name, date, created_at, created_by) VALUES (?, ?, ?, ?)"
             params = (name, date, datetime.now().isoformat(), created_by)
             await self._execute(query, params)
-
-            # Получаем ID через отдельный запрос в том же соединении
-            # Используем другой подход - получаем последний ID через SELECT
+            
             result = await self._execute("SELECT last_insert_rowid() as id", fetchone=True)
-
             if result and result['id']:
                 tournament_id = result['id']
                 logger.info(f"✅ Турнир добавлен с ID: {tournament_id}")
                 return tournament_id
             else:
-                # Если last_insert_rowid не сработал, пробуем получить максимальный ID
                 max_result = await self._execute("SELECT MAX(id) as id FROM tournaments", fetchone=True)
                 if max_result and max_result['id']:
                     logger.info(f"✅ Турнир добавлен с ID (MAX): {max_result['id']}")
                     return max_result['id']
-                else:
-                    logger.error("❌ Не удалось получить ID добавленного турнира")
-                    return 0
+                return 0
         except Exception as e:
             logger.error(f"❌ Ошибка добавления турнира: {e}")
             return 0
@@ -152,19 +132,18 @@ class Database:
         """Мягкое удаление турнира."""
         query = "UPDATE tournaments SET is_active = 0 WHERE id = ?"
         await self._execute(query, (tournament_id,))
-        logger.info(f"✅ Турнир с ID {tournament_id} удален (мягкое удаление)")
 
     async def register_participant(self, tournament_id: int, registered_by: int, full_name: str, city: str) -> bool:
         """Регистрация участника."""
         try:
-            query = """INSERT INTO participants
-                           (tournament_id, registered_by, full_name, city, registered_at)
+            query = """INSERT INTO participants 
+                       (tournament_id, registered_by, full_name, city, registered_at) 
                        VALUES (?, ?, ?, ?, ?)"""
             params = (tournament_id, registered_by, full_name, city, datetime.now().isoformat())
             await self._execute(query, params)
             return True
         except Exception as e:
-            logger.error(f"❌ Ошибка регистрации участника: {e}")
+            logger.error(f"❌ Ошибка регистрации: {e}")
             return False
 
     async def cancel_registration(self, registration_id: int, registered_by: int) -> bool:
@@ -176,7 +155,7 @@ class Database:
             row = await self._execute(check_query, (registration_id, registered_by), fetchone=True)
             return row['cnt'] == 0 if row else False
         except Exception as e:
-            logger.error(f"❌ Ошибка отмены регистрации: {e}")
+            logger.error(f"❌ Ошибка отмены: {e}")
             return False
 
     async def get_participants(self, tournament_id: int) -> List[Dict[str, Any]]:
@@ -188,14 +167,12 @@ class Database:
     async def get_user_registrations(self, registered_by: int) -> List[Dict[str, Any]]:
         """Регистрации пользователя."""
         query = '''
-                SELECT p.*, t.name as tournament_name, t.date as tournament_date
-                FROM participants p
-                         JOIN tournaments t ON p.tournament_id = t.id
-                WHERE p.registered_by = ? \
-                  AND t.is_active = 1 \
-                  AND t.date >= date ('now')
-                ORDER BY t.date, p.registered_at \
-                '''
+            SELECT p.*, t.name as tournament_name, t.date as tournament_date
+            FROM participants p
+            JOIN tournaments t ON p.tournament_id = t.id
+            WHERE p.registered_by = ? AND t.is_active = 1 AND t.date >= date('now')
+            ORDER BY t.date, p.registered_at
+        '''
         rows = await self._execute(query, (registered_by,), fetchall=True)
         return [dict(row) for row in rows] if rows else []
 
@@ -210,3 +187,4 @@ class Database:
         query = "SELECT tournament_id FROM participants WHERE id = ?"
         row = await self._execute(query, (registration_id,), fetchone=True)
         return row['tournament_id'] if row else None
+        
