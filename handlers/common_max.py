@@ -1,4 +1,4 @@
-# handlers/common_max.py
+"""Общие команды бота MAX (/start, /help)."""
 import logging
 from maxapi import Router
 from maxapi.filters.command import Command, CommandStart
@@ -18,7 +18,7 @@ async def on_bot_started(event: BotStarted):
     """При первом открытии бота."""
     user = event.from_user
     bot = get_max_bot()
-    
+
     welcome = (
         f"👋 Привет, {user.first_name}!\n\n"
         "Я бот для регистрации на турниры.\n\n"
@@ -31,7 +31,7 @@ async def on_bot_started(event: BotStarted):
     )
     if user.user_id in ADMIN_USER_IDS:
         welcome += "\n\n🔑 Админ-команды:\n/add_tournament\n/delete_tournament"
-    
+
     await bot.send_message(chat_id=event.chat_id, text=welcome)
 
 @router.message_created(CommandStart())
@@ -50,7 +50,7 @@ async def cmd_start(event: MessageCreated):
     )
     if user.user_id in ADMIN_USER_IDS:
         welcome += "\n\n🔑 Админ-команды:\n/add_tournament\n/delete_tournament"
-    
+
     await event.message.answer(welcome)
 
 @router.message_created(Command("help"))
@@ -68,5 +68,5 @@ async def cmd_help(event: MessageCreated):
     )
     if user.user_id in ADMIN_USER_IDS:
         help_text += "\n\nАдмин:\n/add_tournament\n/delete_tournament"
-    
+
     await event.message.answer(help_text)

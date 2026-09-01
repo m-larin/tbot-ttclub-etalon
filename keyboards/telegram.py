@@ -1,7 +1,7 @@
-# keyboards/telegram.py
+"""Клавиатуры для бота Telegram."""
+from datetime import datetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import Database
-from datetime import datetime
 
 db = Database()
 
@@ -40,7 +40,7 @@ async def get_tg_cancel_registration_keyboard(registrations) -> InlineKeyboardMa
             callback_data=f"cancel_{reg['id']}"
         )
         keyboard.add(button)
-    
+
     cancel_button = InlineKeyboardButton("❌ Отмена", callback_data="cancel_all")
     keyboard.add(cancel_button)
     return keyboard

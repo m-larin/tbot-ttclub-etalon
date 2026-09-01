@@ -1,2 +1,2 @@
-# states/__init__.py
+"""Пакет FSM-состояний для MAX."""
 from .registration import RegistrationStates, TournamentStates, CancelStates

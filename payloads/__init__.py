@@ -1,4 +1,4 @@
-# payloads/__init__.py
+"""Пакет callback-payload'ов для MAX."""
 from .callback import (
     TournamentRegistrationPayload,
     TournamentViewPayload,

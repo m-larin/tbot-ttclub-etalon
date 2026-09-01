@@ -1,4 +1,4 @@
-# handlers/__init__.py
+"""Пакет обработчиков команд для MAX и Telegram."""
 # Импортируем роутеры для MAX
 from .common_max import router as common_max_router
 from .admin_max import router as admin_max_router

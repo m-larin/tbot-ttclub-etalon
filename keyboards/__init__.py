@@ -1,4 +1,4 @@
-# keyboards/__init__.py
+"""Пакет клавиатур для MAX и Telegram."""
 from .max import (
     get_max_registration_tournaments_keyboard,
     get_max_view_tournaments_keyboard,

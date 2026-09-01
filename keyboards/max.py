@@ -1,13 +1,14 @@
-# keyboards/max.py
+"""Клавиатуры для бота MAX."""
+from datetime import datetime
 from maxapi.types import CallbackButton, LinkButton
 from maxapi.utils.inline_keyboard import InlineKeyboardBuilder
 from database.db import Database
-from datetime import datetime
 from payloads import (
     TournamentRegistrationPayload,
     TournamentViewPayload,
     TournamentDeletePayload,
     CancelRegistrationPayload,
+    CancelAllPayload,
 )
 
 db = Database()
@@ -77,7 +78,6 @@ async def get_max_cancel_registration_keyboard(registrations):
             )
         )
 
-    from payloads import CancelAllPayload
     builder.row(
         CallbackButton(
             text="❌ Отмена",

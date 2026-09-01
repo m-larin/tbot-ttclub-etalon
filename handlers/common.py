@@ -1,6 +1,11 @@
-# handlers/common.py
+"""Общие вспомогательные функции для обработчиков MAX и Telegram."""
 import logging
-from context import get_tg_bot, get_max_bot, get_tg_username, get_max_username
+from datetime import datetime
+from typing import Optional
+from maxapi.enums.parse_mode import ParseMode
+from context import get_tg_bot, get_max_bot, get_max_username, get_db
+from keyboards.max import get_max_group_message_markup
+from keyboards.telegram import get_tg_group_message_markup
 from instance.config import ADMIN_USER_IDS, TELEGRAM_GROUP_CHAT_ID, MAX_GROUP_CHAT_ID
 
 logger = logging.getLogger(__name__)
@@ -16,17 +21,17 @@ async def send_notification_to_both(text: str, parse_mode_tg=None, keyboard_tg=N
     """
     tg_bot = get_tg_bot()
     max_bot = get_max_bot()
-    
-    logger.info(f"📌 send_notification_to_both вызван")
-    logger.info(f"📌 TELEGRAM_GROUP_CHAT_ID: {TELEGRAM_GROUP_CHAT_ID}")
-    logger.info(f"📌 MAX_GROUP_CHAT_ID: {MAX_GROUP_CHAT_ID}")
-    
+
+    logger.info("📌 send_notification_to_both вызван")
+    logger.info("📌 TELEGRAM_GROUP_CHAT_ID: %s", TELEGRAM_GROUP_CHAT_ID)
+    logger.info("📌 MAX_GROUP_CHAT_ID: %s", MAX_GROUP_CHAT_ID)
+
     # Отправка в Telegram
     try:
         if tg_bot:
-            logger.info(f"📤 Отправка в Telegram группу {TELEGRAM_GROUP_CHAT_ID}...")
-            logger.info(f"📝 Текст: {text[:100]}...")
-            
+            logger.info("📤 Отправка в Telegram группу %s...", TELEGRAM_GROUP_CHAT_ID)
+            logger.info("📝 Текст: %s...", text[:100])
+
             if keyboard_tg:
                 await tg_bot.send_message(
                     chat_id=TELEGRAM_GROUP_CHAT_ID,
@@ -40,34 +45,128 @@ async def send_notification_to_both(text: str, parse_mode_tg=None, keyboard_tg=N
                     text=text,
                     parse_mode=parse_mode_tg
                 )
-            logger.info(f"✅ Сообщение отправлено в Telegram группу {TELEGRAM_GROUP_CHAT_ID}")
+            logger.info("✅ Сообщение отправлено в Telegram группу %s", TELEGRAM_GROUP_CHAT_ID)
         else:
             logger.warning("⚠️ tg_bot is None, пропускаем отправку в Telegram")
     except Exception as e:
-        logger.error(f"❌ Ошибка отправки в Telegram: {e}")
-    
+        logger.error("❌ Ошибка отправки в Telegram: %s", e)
+
     # Отправка в MAX
     try:
         if max_bot:
-            from maxapi.enums.parse_mode import ParseMode
-            
-            logger.info(f"📤 Отправка в MAX группу {MAX_GROUP_CHAT_ID}...")
-            logger.info(f"📝 Текст: {text[:100]}...")
-            
+            logger.info("📤 Отправка в MAX группу %s...", MAX_GROUP_CHAT_ID)
+            logger.info("📝 Текст: %s...", text[:100])
+
             parse_mode = ParseMode.HTML if parse_mode_tg else None
-            
+
             attachments = None
             if keyboard_max:
                 attachments = [keyboard_max]
-            
+
             await max_bot.send_message(
                 chat_id=MAX_GROUP_CHAT_ID,
                 text=text,
                 parse_mode=parse_mode,
                 attachments=attachments
             )
-            logger.info(f"✅ Сообщение отправлено в MAX группу {MAX_GROUP_CHAT_ID}")
+            logger.info("✅ Сообщение отправлено в MAX группу %s", MAX_GROUP_CHAT_ID)
         else:
             logger.warning("⚠️ max_bot is None, пропускаем отправку в MAX")
     except Exception as e:
-        logger.error(f"❌ Ошибка отправки в MAX: {e}")
+        logger.error("❌ Ошибка отправки в MAX: %s", e)
+
+
+def format_registration_confirmation(tournament: dict, full_name: str, city: str) -> str:
+    """Формирует текст подтверждения регистрации участника."""
+    date_obj = datetime.fromisoformat(tournament['date'])
+    return (
+        f"✅ Участник зарегистрирован!\n\n"
+        f"🏆 {tournament['name']}\n"
+        f"📅 {date_obj.strftime('%d.%m.%Y')}\n"
+        f"👤 {full_name}\n"
+        f"🏙️ {city}"
+    )
+
+
+def format_participants_list(tournament: dict, participants: list) -> str:
+    """Формирует текст со списком участников турнира."""
+    date_obj = datetime.fromisoformat(tournament['date'])
+    text = (
+        f"🏆 {tournament['name']}\n"
+        f"📅 {date_obj.strftime('%d.%m.%Y')}\n"
+        f"👥 Участников: {len(participants)}\n\n"
+    )
+    if participants:
+        for i, p in enumerate(participants, 1):
+            text += f"{i}. {p['full_name']} ({p['city']})\n"
+    else:
+        text += "Пока нет участников."
+    return text
+
+
+def format_user_registrations(registrations: list) -> str:
+    """Формирует текст со списком регистраций пользователя."""
+    text = "📋 Ваши регистрации:\n\n"
+    current_tournament = None
+    for reg in registrations:
+        if current_tournament != reg['tournament_name']:
+            current_tournament = reg['tournament_name']
+            date_obj = datetime.fromisoformat(reg['tournament_date'])
+            text += f"\n🏆 {reg['tournament_name']} ({date_obj.strftime('%d.%m.%Y')}):\n"
+        text += f"   • {reg['full_name']} ({reg['city']})\n"
+    return text
+
+
+def format_participants_update_text(tournament: dict, participants: list, include_date: bool = True) -> str:
+    """Формирует текст уведомления об обновлении списка участников турнира."""
+    text = f"📢 <b>Обновление списка участников!</b>\n\n🏆 {tournament['name']}\n"
+    if include_date:
+        date_obj = datetime.fromisoformat(tournament['date'])
+        text += f"📅 {date_obj.strftime('%d.%m.%Y')}\n"
+    text += f"👥 Всего: {len(participants)}\n\n"
+    for i, p in enumerate(participants, 1):
+        text += f"{i}. {p['full_name']} ({p['city']})\n"
+    return text
+
+
+async def notify_group_from_max(text: str) -> None:
+    """Отправляет уведомление в обе группы из хендлеров MAX (с кнопками MAX и Telegram)."""
+    max_username = get_max_username()
+    max_keyboard = get_max_group_message_markup(max_username)
+    tg_keyboard = get_tg_group_message_markup("ttc_etalon_bot")
+    await send_notification_to_both(
+        text=text,
+        parse_mode_tg='HTML',
+        keyboard_tg=tg_keyboard,
+        keyboard_max=max_keyboard.as_markup(),
+    )
+
+
+async def notify_group_from_tg(text: str, tg_username: str) -> None:
+    """Отправляет уведомление в обе группы из хендлеров Telegram (без кнопки MAX)."""
+    tg_keyboard = get_tg_group_message_markup(tg_username)
+    await send_notification_to_both(
+        text=text,
+        parse_mode_tg='HTML',
+        keyboard_tg=tg_keyboard,
+    )
+
+
+async def get_tournament_or_notify(event, tournament_id: int) -> Optional[dict]:
+    """Получает турнир по ID для MAX callback или уведомляет об ошибке через event.answer()."""
+    db = get_db()
+    tournament = await db.get_tournament(tournament_id)
+    if not tournament:
+        await event.answer("❌ Турнир не найден.")
+        return None
+    return tournament
+
+
+async def get_tournaments_or_notify(event, empty_text: str) -> Optional[list]:
+    """Получает список активных турниров для MAX или уведомляет об их отсутствии."""
+    db = get_db()
+    tournaments = await db.get_tournaments()
+    if not tournaments:
+        await event.message.answer(empty_text)
+        return None
+    return tournaments

@@ -10,5 +10,6 @@ ignore-paths=
 
 ignore=bot_test.py
 
-disable=broad-except
+disable=broad-except,
+    too-few-public-methods
 
