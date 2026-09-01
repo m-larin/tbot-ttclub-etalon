@@ -4,6 +4,7 @@
 """
 import asyncio
 import logging
+import signal
 
 from maxapi import Bot as MaxBot, Dispatcher
 from maxapi.types import BotCommand as MaxBotCommand
@@ -19,6 +20,7 @@ from handlers import (
     register_common_max,
     register_admin_max,
     register_registration_max,
+    register_tg_common,
     register_tg_registration,
     register_tg_admin,
 )
@@ -103,6 +105,19 @@ async def run_max_polling(max_bot: MaxBot, dp: Dispatcher) -> None:
     await dp.start_polling(max_bot)
 
 
+def register_shutdown_signals(loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
+    """Регистрация обработчиков SIGINT/SIGTERM для корректной остановки бота."""
+    def request_shutdown(signum: int) -> None:
+        logger.info("👋 Получен сигнал %s, остановка бота...", signal.Signals(signum).name)
+        loop.call_soon_threadsafe(stop_event.set)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, lambda signum, _frame: request_shutdown(signum))
+        except (ValueError, AttributeError, OSError):
+            pass  # сигнал недоступен на данной платформе
+
+
 async def main() -> None:
     """Главная функция запуска обоих ботов."""
     # Инициализация базы данных
@@ -131,6 +146,7 @@ async def main() -> None:
     )
 
     # Регистрируем обработчики для Telegram
+    register_tg_common()
     register_tg_registration()
     register_tg_admin()
 
@@ -149,15 +165,25 @@ async def main() -> None:
 
     logger.info("🚀 Бот запущен! Нажмите Ctrl+C для остановки")
 
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+    register_shutdown_signals(loop, stop_event)
+
+    tg_task = asyncio.create_task(run_tg_polling(tg_bot))
+    max_task = asyncio.create_task(run_max_polling(max_bot, dp))
+
     try:
-        tg_task = asyncio.create_task(run_tg_polling(tg_bot))
-        max_task = asyncio.create_task(run_max_polling(max_bot, dp))
-        await asyncio.gather(tg_task, max_task, return_exceptions=True)
-    except KeyboardInterrupt:
-        logger.info("👋 Остановка по Ctrl+C")
+        await stop_event.wait()
     except Exception as e:
         logger.error("❌ Ошибка: %s", e)
     finally:
+        tg_task.cancel()
+        try:
+            await dp.stop_polling()
+        except Exception:
+            pass
+        await asyncio.gather(tg_task, max_task, return_exceptions=True)
+
         if tg_bot:
             try:
                 await tg_bot.close()

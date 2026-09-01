@@ -1,4 +1,5 @@
 """Общие вспомогательные функции для обработчиков MAX и Telegram."""
+import json
 import logging
 from datetime import datetime
 from typing import Optional
@@ -13,6 +14,66 @@ logger = logging.getLogger(__name__)
 def is_admin(user_id: int) -> bool:
     """Проверка прав администратора."""
     return user_id in ADMIN_USER_IDS
+
+
+def get_user_id(user) -> Optional[int]:
+    """Получение ID пользователя (MAX использует user_id, Telegram - id)."""
+    return getattr(user, 'user_id', None) or getattr(user, 'id', None)
+
+
+def get_user_display_name(user) -> str:
+    """Получение отображаемого имени пользователя для логов."""
+    username = getattr(user, 'username', None)
+    if username:
+        return f"@{username}"
+    full_name = f"{user.first_name or ''} {getattr(user, 'last_name', '') or ''}".strip()
+    if full_name:
+        return full_name
+    return f"ID: {get_user_id(user)}"
+
+
+def build_welcome_message(first_name: str, user_id: int) -> str:
+    """Формирует приветственное сообщение для команды /start."""
+    text = (
+        f"👋 Привет, {first_name}!\n\n"
+        "Я бот для регистрации на турниры.\n\n"
+        "📚 Команды:\n"
+        "/register - зарегистрировать участника\n"
+        "/participants - посмотреть участников\n"
+        "/my_registrations - мои регистрации\n"
+        "/cancel_registration - отменить регистрацию\n"
+        "/help - справка"
+    )
+    if is_admin(user_id):
+        text += "\n\n🔑 Админ-команды:\n/add_tournament\n/delete_tournament"
+    return text
+
+
+def build_help_message(user_id: int) -> str:
+    """Формирует текст справки для команды /help."""
+    text = (
+        "📚 Справка:\n\n"
+        "/start - начать работу\n"
+        "/register - регистрация участника\n"
+        "/participants - список участников\n"
+        "/my_registrations - ваши регистрации\n"
+        "/cancel_registration - отменить регистрацию\n"
+        "/help - эта справка"
+    )
+    if is_admin(user_id):
+        text += "\n\nАдмин:\n/add_tournament\n/delete_tournament"
+    return text
+
+
+def log_user_action(user, action: str, details: Optional[dict] = None) -> None:
+    """Логирование действий пользователя (общее для MAX и Telegram)."""
+    log_message = (
+        f"👤 Пользователь: {get_user_display_name(user)} "
+        f"(ID: {get_user_id(user)}) | Действие: {action}"
+    )
+    if details:
+        log_message += f" | Подробности: {json.dumps(details, ensure_ascii=False)}"
+    logger.info(log_message)
 
 async def send_notification_to_both(text: str, parse_mode_tg=None, keyboard_tg=None, keyboard_max=None):
     """

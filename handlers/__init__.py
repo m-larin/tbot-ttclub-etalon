@@ -10,6 +10,7 @@ from .admin_max import register_handlers as register_admin_max
 from .registration_max import register_handlers as register_registration_max
 
 # Импортируем функции регистрации для Telegram
+from .common_tg import register_handlers as register_tg_common
 from .registration_tg import register_handlers as register_tg_registration
 from .admin_tg import register_handlers as register_tg_admin
 
@@ -23,6 +24,7 @@ __all__ = [
     'register_admin_max',
     'register_registration_max',
     # Telegram регистрация
+    'register_tg_common',
     'register_tg_registration',
     'register_tg_admin',
 ]

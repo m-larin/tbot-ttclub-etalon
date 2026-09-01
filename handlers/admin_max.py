@@ -18,6 +18,7 @@ from handlers.common import (
     notify_group_from_max,
     get_tournament_or_notify,
     get_tournaments_or_notify,
+    log_user_action,
 )
 from context import get_max_bot, get_max_username, get_db
 
@@ -50,9 +51,11 @@ async def cmd_add_tournament(event: MessageCreated, context: MemoryContext):
     """Добавление турнира."""
     user = event.from_user
     if not is_admin(user.user_id):
+        log_user_action(user, "add_tournament_unauthorized")
         await event.message.answer("⛔ У вас нет прав.")
         return
 
+    log_user_action(user, "add_tournament_start")
     await context.set_state(TournamentStates.waiting_for_name)
     await event.message.answer("Введите название турнира:")
 
@@ -67,6 +70,7 @@ async def process_tournament_name(event: MessageCreated, context: MemoryContext)
 
     await context.update_data(tournament_name=event.message.body.text)
     await context.set_state(TournamentStates.waiting_for_date)
+    log_user_action(user, "add_tournament_name_entered", {"tournament_name": event.message.body.text})
     await event.message.answer("Введите дату (ДД.ММ.ГГГГ):")
 
 @router.message_created(TournamentStates.waiting_for_date)
@@ -93,6 +97,12 @@ async def process_tournament_date(event: MessageCreated, context: MemoryContext)
             await event.message.answer("❌ Ошибка создания турнира.")
             return
 
+        log_user_action(user, "add_tournament_success", {
+            "tournament_name": tournament_name,
+            "tournament_date": date_str,
+            "tournament_id": tournament_id,
+        })
+
         await event.message.answer(f"✅ Турнир '{tournament_name}' на {date_str} добавлен!")
         await context.clear()
 
@@ -105,6 +115,7 @@ async def process_tournament_date(event: MessageCreated, context: MemoryContext)
         logger.info("✅ Уведомление отправлено в оба мессенджера для турнира '%s'", tournament_name)
 
     except ValueError:
+        log_user_action(user, "add_tournament_invalid_date", {"entered_date": event.message.body.text})
         await event.message.answer("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ")
     except Exception as e:
         logger.error("❌ Ошибка: %s", e)
@@ -115,10 +126,12 @@ async def cmd_delete_tournament(event: MessageCreated):
     """Удаление турнира."""
     user = event.from_user
     if not is_admin(user.user_id):
+        log_user_action(user, "delete_tournament_unauthorized")
         await event.message.answer("⛔ У вас нет прав.")
         return
 
     tournaments = await get_tournaments_or_notify(event, "Нет активных турниров.")
+    log_user_action(user, "delete_tournament_start", {"tournaments_count": len(tournaments) if tournaments else 0})
     if not tournaments:
         return
 
@@ -130,6 +143,7 @@ async def process_delete_selection(event: MessageCallback, payload: TournamentDe
     """Запрос подтверждения удаления."""
     user = event.from_user
     if not is_admin(user.user_id):
+        log_user_action(user, "delete_tournament_unauthorized")
         await event.answer("⛔ У вас нет прав.")
         return
 
@@ -160,6 +174,7 @@ async def process_delete_confirm(event: MessageCallback, payload: TournamentDele
     """Подтверждение удаления."""
     user = event.from_user
     if not is_admin(user.user_id):
+        log_user_action(user, "delete_tournament_unauthorized")
         await event.answer("⛔ У вас нет прав.")
         return
 
@@ -169,6 +184,10 @@ async def process_delete_confirm(event: MessageCallback, payload: TournamentDele
     tournament = await db.get_tournament(payload.tournament_id)
     if tournament:
         await db.delete_tournament(payload.tournament_id)
+        log_user_action(user, "delete_tournament_success", {
+            "tournament_id": payload.tournament_id,
+            "tournament_name": tournament['name'],
+        })
         await event.answer("✅ Турнир удален!")
         await bot.send_message(
             chat_id=event.chat.chat_id,
@@ -176,6 +195,7 @@ async def process_delete_confirm(event: MessageCallback, payload: TournamentDele
         )
         logger.info("Админ %s удалил турнир '%s'", user.user_id, tournament['name'])
     else:
+        log_user_action(user, "delete_tournament_failed_not_found", {"tournament_id": payload.tournament_id})
         await event.answer("❌ Турнир не найден.")
 
 @router.message_callback(DeleteCancelPayload.filter())

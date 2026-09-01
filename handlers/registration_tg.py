@@ -12,6 +12,7 @@ from handlers.common import (
     format_user_registrations,
     format_participants_update_text,
     notify_group_from_tg,
+    log_user_action,
 )
 from context import get_db, get_tg_bot, get_tg_username
 
@@ -33,6 +34,7 @@ def register_handlers():  # pylint: disable=too-many-statements
     async def cmd_register(message: Message):
         """Показать список турниров для регистрации."""
         tournaments = await db.get_tournaments()
+        log_user_action(message.from_user, "register_command", {"tournaments_count": len(tournaments)})
         if not tournaments:
             await bot.reply_to(message, "📭 Нет активных турниров.")
             return
@@ -48,6 +50,7 @@ def register_handlers():  # pylint: disable=too-many-statements
     async def cmd_participants(message: Message):
         """Показать список турниров для просмотра участников."""
         tournaments = await db.get_tournaments()
+        log_user_action(message.from_user, "participants_command", {"tournaments_count": len(tournaments)})
         if not tournaments:
             await bot.reply_to(message, "Нет активных турниров.")
             return
@@ -63,6 +66,7 @@ def register_handlers():  # pylint: disable=too-many-statements
     async def cmd_my_registrations(message: Message):
         """Показать регистрации пользователя."""
         registrations = await db.get_user_registrations(message.from_user.id)
+        log_user_action(message.from_user, "my_registrations_command", {"registrations_count": len(registrations)})
         if not registrations:
             await bot.reply_to(message, "📭 Вы еще никого не зарегистрировали.")
             return
@@ -74,6 +78,7 @@ def register_handlers():  # pylint: disable=too-many-statements
     async def cmd_cancel_registration(message: Message):
         """Показать регистрации для отмены."""
         registrations = await db.get_user_registrations(message.from_user.id)
+        log_user_action(message.from_user, "cancel_registration_start", {"registrations_count": len(registrations)})
         if not registrations:
             await bot.reply_to(message, "📭 Нет активных регистраций.")
             return
@@ -92,8 +97,14 @@ def register_handlers():  # pylint: disable=too-many-statements
         tournament = await db.get_tournament(tournament_id)
 
         if not tournament:
+            log_user_action(call.from_user, "register_failed_tournament_not_found", {"tournament_id": tournament_id})
             await bot.answer_callback_query(call.id, "❌ Турнир не найден.", show_alert=True)
             return
+
+        log_user_action(call.from_user, "register_new_participant_start", {
+            "tournament_id": tournament_id,
+            "tournament_name": tournament['name'],
+        })
 
         user_temp_data[call.from_user.id] = {'tournament_id': tournament_id}
         user_states[call.from_user.id] = 'waiting_full_name'
@@ -117,6 +128,7 @@ def register_handlers():  # pylint: disable=too-many-statements
 
         user_temp_data[message.from_user.id]['full_name'] = full_name
         user_states[message.from_user.id] = 'waiting_city'
+        log_user_action(message.from_user, "participant_data_entered", {"field": "full_name"})
         await bot.reply_to(message, "Введите город:")
 
     @bot.message_handler(func=lambda m: user_states.get(m.from_user.id) == 'waiting_city')
@@ -141,6 +153,11 @@ def register_handlers():  # pylint: disable=too-many-statements
 
         if success:
             tournament = await db.get_tournament(tournament_id)
+            log_user_action(message.from_user, "registration_complete", {
+                "tournament_id": tournament_id,
+                "tournament_name": tournament['name'],
+                "participant_name": full_name,
+            })
             await bot.reply_to(message, format_registration_confirmation(tournament, full_name, city))
 
             # Отправляем обновление в оба мессенджера
@@ -148,6 +165,7 @@ def register_handlers():  # pylint: disable=too-many-statements
             text = format_participants_update_text(tournament, participants, include_date=False)
             await notify_group_from_tg(text, tg_username)
         else:
+            log_user_action(message.from_user, "registration_failed_db_error")
             await bot.reply_to(message, "❌ Ошибка регистрации.")
 
         user_states.pop(message.from_user.id, None)
@@ -166,6 +184,11 @@ def register_handlers():  # pylint: disable=too-many-statements
                 call.message.message_id
             )
             return
+
+        log_user_action(call.from_user, "view_participants", {
+            "tournament_id": tournament_id,
+            "tournament_name": tournament['name'],
+        })
 
         participants = await db.get_participants(tournament_id)
         text = format_participants_list(tournament, participants)
@@ -209,6 +232,7 @@ def register_handlers():  # pylint: disable=too-many-statements
         success = await db.cancel_registration(registration_id, call.from_user.id)
 
         if success:
+            log_user_action(call.from_user, "cancel_registration_success", {"registration_id": registration_id})
             await bot.answer_callback_query(call.id, "✅ Отменено!")
             await bot.edit_message_text(
                 "✅ Регистрация отменена.",
@@ -222,6 +246,7 @@ def register_handlers():  # pylint: disable=too-many-statements
                 text = format_participants_update_text(tournament, participants, include_date=False)
                 await notify_group_from_tg(text, tg_username)
         else:
+            log_user_action(call.from_user, "cancel_registration_failed", {"registration_id": registration_id})
             await bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
 
     @bot.callback_query_handler(func=lambda call: call.data == "cancel_all")

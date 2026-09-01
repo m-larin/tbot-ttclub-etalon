@@ -27,6 +27,7 @@ from handlers.common import (
     notify_group_from_max,
     get_tournament_or_notify,
     get_tournaments_or_notify,
+    log_user_action,
 )
 from context import get_max_bot, get_db
 
@@ -41,6 +42,7 @@ def register_handlers():
 async def cmd_register(event: MessageCreated):
     """Регистрация участника."""
     tournaments = await get_tournaments_or_notify(event, "📭 Нет активных турниров.")
+    log_user_action(event.from_user, "register_command", {"tournaments_count": len(tournaments) if tournaments else 0})
     if not tournaments:
         return
 
@@ -56,7 +58,15 @@ async def process_registration_tournament(
 
     tournament = await get_tournament_or_notify(event, payload.tournament_id)
     if not tournament:
+        log_user_action(event.from_user, "register_failed_tournament_not_found", {
+            "tournament_id": payload.tournament_id
+        })
         return
+
+    log_user_action(event.from_user, "register_new_participant_start", {
+        "tournament_id": payload.tournament_id,
+        "tournament_name": tournament['name'],
+    })
 
     await context.update_data(tournament_id=payload.tournament_id)
     await context.set_state(RegistrationStates.waiting_for_full_name)
@@ -77,6 +87,7 @@ async def process_full_name(event: MessageCreated, context: MemoryContext):
 
     await context.update_data(full_name=full_name)
     await context.set_state(RegistrationStates.waiting_for_city)
+    log_user_action(event.from_user, "participant_data_entered", {"field": "full_name"})
     await event.message.answer("Введите город:")
 
 @router.message_created(RegistrationStates.waiting_for_city)
@@ -102,6 +113,11 @@ async def process_city(event: MessageCreated, context: MemoryContext):
 
     if success:
         tournament = await db.get_tournament(tournament_id)
+        log_user_action(event.from_user, "registration_complete", {
+            "tournament_id": tournament_id,
+            "tournament_name": tournament['name'],
+            "participant_name": full_name,
+        })
         await event.message.answer(format_registration_confirmation(tournament, full_name, city))
 
         # Отправляем обновление в оба мессенджера
@@ -109,6 +125,7 @@ async def process_city(event: MessageCreated, context: MemoryContext):
         text = format_participants_update_text(tournament, participants)
         await notify_group_from_max(text)
     else:
+        log_user_action(event.from_user, "registration_failed_db_error")
         await event.message.answer("❌ Ошибка регистрации.")
 
     await context.clear()
@@ -117,6 +134,9 @@ async def process_city(event: MessageCreated, context: MemoryContext):
 async def cmd_participants(event: MessageCreated):
     """Просмотр участников."""
     tournaments = await get_tournaments_or_notify(event, "Нет активных турниров.")
+    log_user_action(event.from_user, "participants_command", {
+        "tournaments_count": len(tournaments) if tournaments else 0
+    })
     if not tournaments:
         return
 
@@ -132,6 +152,11 @@ async def process_view_participants(event: MessageCallback, payload: TournamentV
     if not tournament:
         return
 
+    log_user_action(event.from_user, "view_participants", {
+        "tournament_id": payload.tournament_id,
+        "tournament_name": tournament['name'],
+    })
+
     db = get_db()
     participants = await db.get_participants(payload.tournament_id)
     text = format_participants_list(tournament, participants)
@@ -144,6 +169,7 @@ async def cmd_my_registrations(event: MessageCreated):
     """Мои регистрации."""
     db = get_db()
     registrations = await db.get_user_registrations(event.from_user.user_id)
+    log_user_action(event.from_user, "my_registrations_command", {"registrations_count": len(registrations)})
     if not registrations:
         await event.message.answer("📭 Вы еще никого не зарегистрировали.")
         return
@@ -156,6 +182,7 @@ async def cmd_cancel_registration(event: MessageCreated):
     """Отмена регистрации."""
     db = get_db()
     registrations = await db.get_user_registrations(event.from_user.user_id)
+    log_user_action(event.from_user, "cancel_registration_start", {"registrations_count": len(registrations)})
     if not registrations:
         await event.message.answer("📭 Нет активных регистраций.")
         return
@@ -200,6 +227,7 @@ async def process_cancel_confirm(event: MessageCallback, payload: CancelConfirmP
     success = await db.cancel_registration(payload.registration_id, event.from_user.user_id)
 
     if success:
+        log_user_action(event.from_user, "cancel_registration_success", {"registration_id": payload.registration_id})
         await event.answer("✅ Отменено!")
         await bot.send_message(
             chat_id=event.chat.chat_id,
@@ -212,6 +240,7 @@ async def process_cancel_confirm(event: MessageCallback, payload: CancelConfirmP
             text = format_participants_update_text(tournament, participants)
             await notify_group_from_max(text)
     else:
+        log_user_action(event.from_user, "cancel_registration_failed", {"registration_id": payload.registration_id})
         await event.answer("❌ Ошибка.")
 
     await context.clear()

@@ -29,6 +29,12 @@ def get_tg_group_message_markup(bot_username: str) -> InlineKeyboardMarkup:
     keyboard.add(button)
     return keyboard
 
+async def get_tg_delete_tournaments_keyboard(tournaments_list) -> InlineKeyboardMarkup:
+    """Клавиатура для выбора турнира при удалении в Telegram (с кнопкой отмены)."""
+    keyboard = await get_tg_tournaments_keyboard(tournaments_list, "del")
+    keyboard.add(InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete"))
+    return keyboard
+
 async def get_tg_cancel_registration_keyboard(registrations) -> InlineKeyboardMarkup:
     """Клавиатура для отмены регистрации в Telegram."""
     keyboard = InlineKeyboardMarkup(row_width=1)
