@@ -1,14 +1,32 @@
-# Токен доступа
-ACCESS_TOKEN = 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
-# ID группы для отправки уведомлений (замените на свой)
-GROUP_CHAT_ID = -000000000000000  # Замените на реальный ID группы
-# ID администратора (замените на свой)
-ADMIN_USER_IDS = [
-    00000000000000
-]
-# Лог файл
-LOG_FILE = './log/bot.log'
-# Файл базы данных
-DB_FILE='./database/tournaments.db'
-# Таймаут
-POLLING_TIMEOUT = 120
+# instance/config.py
+
+# Токен MAX бота
+MAX_TOKEN = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+# Токен Telegram бота
+TELEGRAM_TOKEN = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+# ID групп телеграмм для отправки уведомлений
+TELEGRAM_GROUP_CHAT_ID = -XXXXXXXXX 
+
+# ID групп мах
+MAX_GROUP_CHAT_ID = -XXXXXXXXXXXXXXX
+
+# Список ID администраторов (числа)
+ADMIN_USER_IDS = [XXXXXXXXXXXXXXX, XXXXXXXXXXXXXXX]
+
+# Пути к файлам
+LOG_FILE = "/var/log/bot/bot.log"
+DB_FILE = "/opt/bot/tbot-ttclub-etalon/data/tournaments.db"
+
+# Таймаут polling (секунды)
+POLLING_TIMEOUT = 20
+
+# Режим запуска: "polling" или "webhook"
+MODE = "polling"
+
+# Настройки для webhook (если используется)
+WEBHOOK_HOST = "https://your-domain.com"
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_PORT = 8443
+WEBHOOK_SECRET = "your-secret-token-5-256-chars"

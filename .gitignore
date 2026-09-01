@@ -1,0 +1,5 @@
+data
+log
+.venv
+instance/config.py
+*__pycache__
