@@ -18,7 +18,7 @@
 
 ## 🚀 Установка
 
-Установка bot-а
+Установка bot-а в директорию /opt/bot/tbot-ttclub-etalon
 
 ````
 cd /opt
