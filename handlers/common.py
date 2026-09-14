@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 from maxapi.enums.parse_mode import ParseMode
-from context import get_tg_bot, get_max_bot, get_max_username, get_db
+from context import get_tg_bot, get_max_bot, get_max_username, get_tg_username, get_db
 from keyboards.max import get_max_group_message_markup
 from keyboards.telegram import get_tg_group_message_markup
 from instance.config import ADMIN_USER_IDS, TELEGRAM_GROUP_CHAT_ID, MAX_GROUP_CHAT_ID
@@ -194,7 +194,7 @@ async def notify_group_from_max(text: str) -> None:
     """Отправляет уведомление в обе группы из хендлеров MAX (с кнопками MAX и Telegram)."""
     max_username = get_max_username()
     max_keyboard = get_max_group_message_markup(max_username)
-    tg_keyboard = get_tg_group_message_markup("ttc_etalon_bot")
+    tg_keyboard = get_tg_group_message_markup(get_tg_username())
     await send_notification_to_both(
         text=text,
         parse_mode_tg='HTML',
@@ -204,12 +204,15 @@ async def notify_group_from_max(text: str) -> None:
 
 
 async def notify_group_from_tg(text: str, tg_username: str) -> None:
-    """Отправляет уведомление в обе группы из хендлеров Telegram (без кнопки MAX)."""
+    """Отправляет уведомление в обе группы из хендлеров Telegram (с кнопками MAX и Telegram)."""
     tg_keyboard = get_tg_group_message_markup(tg_username)
+    max_username = get_max_username()
+    max_keyboard = get_max_group_message_markup(max_username)
     await send_notification_to_both(
         text=text,
         parse_mode_tg='HTML',
         keyboard_tg=tg_keyboard,
+        keyboard_max=max_keyboard.as_markup(),
     )
 
 
