@@ -3,3 +3,4 @@ log
 .venv
 instance/config.py
 *__pycache__
+.aider*
