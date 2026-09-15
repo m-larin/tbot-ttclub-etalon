@@ -178,12 +178,14 @@ def format_user_registrations(registrations: list) -> str:
     return text
 
 
-def format_participants_update_text(tournament: dict, participants: list, include_date: bool = True) -> str:
+def format_participants_update_text(tournament: dict, participants: list) -> str:
     """Формирует текст уведомления об обновлении списка участников турнира."""
-    text = f"📢 <b>Обновление списка участников!</b>\n\n🏆 {tournament['name']}\n"
-    if include_date:
-        date_obj = datetime.fromisoformat(tournament['date'])
-        text += f"📅 {date_obj.strftime('%d.%m.%Y')}\n"
+    date_obj = datetime.fromisoformat(tournament['date'])
+    text = (
+        f"📢 <b>Обновление списка участников!</b>\n\n"
+        f"🏆 {tournament['name']}\n"
+        f"📅 {date_obj.strftime('%d.%m.%Y')}\n"
+    )
     text += f"👥 Всего: {len(participants)}\n\n"
     for i, p in enumerate(participants, 1):
         text += f"{i}. {p['full_name']} ({p['city']})\n"

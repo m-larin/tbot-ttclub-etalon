@@ -162,7 +162,7 @@ def register_handlers():  # pylint: disable=too-many-statements
 
             # Отправляем обновление в оба мессенджера
             participants = await db.get_participants(tournament_id)
-            text = format_participants_update_text(tournament, participants, include_date=False)
+            text = format_participants_update_text(tournament, participants)
             await notify_group_from_tg(text, tg_username)
         else:
             log_user_action(message.from_user, "registration_failed_db_error")
@@ -243,7 +243,7 @@ def register_handlers():  # pylint: disable=too-many-statements
             if tournament_id:
                 tournament = await db.get_tournament(tournament_id)
                 participants = await db.get_participants(tournament_id)
-                text = format_participants_update_text(tournament, participants, include_date=False)
+                text = format_participants_update_text(tournament, participants)
                 await notify_group_from_tg(text, tg_username)
         else:
             log_user_action(call.from_user, "cancel_registration_failed", {"registration_id": registration_id})
