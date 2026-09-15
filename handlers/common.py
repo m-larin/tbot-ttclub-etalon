@@ -65,9 +65,15 @@ def build_help_message(user_id: int) -> str:
     return text
 
 
+def get_action_source(user) -> str:
+    """Определяет источник действия пользователя: MAX или Telegram (по наличию атрибута user_id)."""
+    return "MAX" if hasattr(user, 'user_id') else "TG"
+
+
 def log_user_action(user, action: str, details: Optional[dict] = None) -> None:
     """Логирование действий пользователя (общее для MAX и Telegram)."""
     log_message = (
+        f"[{get_action_source(user)}] "
         f"👤 Пользователь: {get_user_display_name(user)} "
         f"(ID: {get_user_id(user)}) | Действие: {action}"
     )

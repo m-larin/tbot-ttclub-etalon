@@ -54,7 +54,7 @@ class Database:
                         result = None
 
                     conn.commit()
-                    logger.info("✅ Выполнен запрос: %s...", query[:100])
+                    logger.debug("✅ Выполнен запрос: %s...", query[:100])
                     return result
 
                 except sqlite3.OperationalError as e:
