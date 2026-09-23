@@ -7,8 +7,14 @@ from payloads import (
     TournamentRegistrationPayload,
     TournamentViewPayload,
     TournamentDeletePayload,
+    CancelTournamentPayload,
     CancelRegistrationPayload,
     CancelAllPayload,
+)
+from keyboards.common import (
+    group_registrations_by_tournament,
+    format_cancel_tournament_button,
+    format_cancel_participant_button,
 )
 
 db = Database()
@@ -63,17 +69,38 @@ def get_max_group_message_markup(bot_username: str):
     return builder
 
 
-async def get_max_cancel_registration_keyboard(registrations):
-    """Клавиатура для отмены регистрации в MAX."""
+def get_max_cancel_tournaments_keyboard(registrations):
+    """Клавиатура выбора турнира для отмены регистрации в MAX."""
+    builder = InlineKeyboardBuilder()
+
+    for tournament in group_registrations_by_tournament(registrations):
+        payload = CancelTournamentPayload(tournament_id=tournament['id'])
+        builder.row(
+            CallbackButton(
+                text=format_cancel_tournament_button(tournament),
+                payload=payload.pack()
+            )
+        )
+
+    builder.row(
+        CallbackButton(
+            text="❌ Отмена",
+            payload=CancelAllPayload().pack()
+        )
+    )
+
+    return builder.as_markup()
+
+
+def get_max_cancel_registration_keyboard(registrations):
+    """Клавиатура выбора участника турнира для отмены регистрации в MAX."""
     builder = InlineKeyboardBuilder()
 
     for reg in registrations:
-        date_obj = datetime.fromisoformat(reg['tournament_date'])
-        button_text = f"{reg['tournament_name']} ({date_obj.strftime('%d.%m.%Y')}) - {reg['full_name']}"
         payload = CancelRegistrationPayload(registration_id=reg['id'])
         builder.row(
             CallbackButton(
-                text=button_text,
+                text=format_cancel_participant_button(reg),
                 payload=payload.pack()
             )
         )

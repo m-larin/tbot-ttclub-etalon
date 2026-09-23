@@ -2,6 +2,11 @@
 from datetime import datetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database.db import Database
+from keyboards.common import (
+    group_registrations_by_tournament,
+    format_cancel_tournament_button,
+    format_cancel_participant_button,
+)
 
 db = Database()
 
@@ -35,14 +40,26 @@ async def get_tg_delete_tournaments_keyboard(tournaments_list) -> InlineKeyboard
     keyboard.add(InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete"))
     return keyboard
 
-async def get_tg_cancel_registration_keyboard(registrations) -> InlineKeyboardMarkup:
-    """Клавиатура для отмены регистрации в Telegram."""
+def get_tg_cancel_tournaments_keyboard(registrations) -> InlineKeyboardMarkup:
+    """Клавиатура выбора турнира для отмены регистрации в Telegram."""
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    for tournament in group_registrations_by_tournament(registrations):
+        button = InlineKeyboardButton(
+            format_cancel_tournament_button(tournament),
+            callback_data=f"unreg_{tournament['id']}"
+        )
+        keyboard.add(button)
+
+    cancel_button = InlineKeyboardButton("❌ Отмена", callback_data="cancel_all")
+    keyboard.add(cancel_button)
+    return keyboard
+
+def get_tg_cancel_registration_keyboard(registrations) -> InlineKeyboardMarkup:
+    """Клавиатура выбора участника турнира для отмены регистрации в Telegram."""
     keyboard = InlineKeyboardMarkup(row_width=1)
     for reg in registrations:
-        date_obj = datetime.fromisoformat(reg['tournament_date'])
-        button_text = f"{reg['tournament_name']} ({date_obj.strftime('%d.%m.%Y')}) - {reg['full_name']}"
         button = InlineKeyboardButton(
-            button_text,
+            format_cancel_participant_button(reg),
             callback_data=f"cancel_{reg['id']}"
         )
         keyboard.add(button)

@@ -4,6 +4,7 @@ from .callback import (
     TournamentViewPayload,
     TournamentDeletePayload,
     TournamentDeleteConfirmPayload,
+    CancelTournamentPayload,
     CancelRegistrationPayload,
     CancelConfirmPayload,
     CancelAllPayload,

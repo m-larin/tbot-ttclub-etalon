@@ -148,13 +148,19 @@ class Database:
             logger.error("❌ Ошибка регистрации: %s", e)
             return False
 
-    async def cancel_registration(self, registration_id: int, registered_by: int) -> bool:
-        """Отмена регистрации (только свои)."""
+    async def cancel_registration(self, registration_id: int, registered_by: Optional[int]) -> bool:
+        """Отмена регистрации (только свои; registered_by=None — любую, для админов)."""
         try:
-            query = "DELETE FROM participants WHERE id = ? AND registered_by = ?"
-            await self._execute(query, (registration_id, registered_by))
-            check_query = "SELECT COUNT(*) as cnt FROM participants WHERE id = ? AND registered_by = ?"
-            row = await self._execute(check_query, (registration_id, registered_by), fetchone=True)
+            if registered_by is None:
+                query = "DELETE FROM participants WHERE id = ?"
+                await self._execute(query, (registration_id,))
+                check_query = "SELECT COUNT(*) as cnt FROM participants WHERE id = ?"
+                row = await self._execute(check_query, (registration_id,), fetchone=True)
+            else:
+                query = "DELETE FROM participants WHERE id = ? AND registered_by = ?"
+                await self._execute(query, (registration_id, registered_by))
+                check_query = "SELECT COUNT(*) as cnt FROM participants WHERE id = ? AND registered_by = ?"
+                row = await self._execute(check_query, (registration_id, registered_by), fetchone=True)
             return row['cnt'] == 0 if row else False
         except Exception as e:
             logger.error("❌ Ошибка отмены: %s", e)
@@ -168,14 +174,27 @@ class Database:
 
     async def get_user_registrations(self, registered_by: int) -> List[Dict[str, Any]]:
         """Регистрации пользователя."""
+        return await self.get_registrations(registered_by=registered_by)
+
+    async def get_registrations(
+        self, registered_by: Optional[int] = None, tournament_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Регистрации на активные турниры с фильтром по автору и/или турниру (None — без фильтра)."""
         query = '''
             SELECT p.*, t.name as tournament_name, t.date as tournament_date
             FROM participants p
             JOIN tournaments t ON p.tournament_id = t.id
-            WHERE p.registered_by = ? AND t.is_active = 1 AND t.date >= date('now')
-            ORDER BY t.date, p.registered_at
+            WHERE t.is_active = 1 AND t.date >= date('now')
         '''
-        rows = await self._execute(query, (registered_by,), fetchall=True)
+        params = []
+        if registered_by is not None:
+            query += " AND p.registered_by = ?"
+            params.append(registered_by)
+        if tournament_id is not None:
+            query += " AND p.tournament_id = ?"
+            params.append(tournament_id)
+        query += " ORDER BY t.date, p.registered_at"
+        rows = await self._execute(query, tuple(params), fetchall=True)
         return [dict(row) for row in rows] if rows else []
 
     async def get_registration_count(self, tournament_id: int) -> int:

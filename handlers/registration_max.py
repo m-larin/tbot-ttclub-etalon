@@ -10,16 +10,21 @@ from states.registration import RegistrationStates, CancelStates
 from keyboards.max import (
     get_max_registration_tournaments_keyboard,
     get_max_view_tournaments_keyboard,
+    get_max_cancel_tournaments_keyboard,
     get_max_cancel_registration_keyboard,
 )
 from payloads import (
     TournamentRegistrationPayload,
     TournamentViewPayload,
+    CancelTournamentPayload,
     CancelRegistrationPayload,
     CancelConfirmPayload,
     CancelAllPayload,
 )
 from handlers.common import (
+    is_admin,
+    get_cancellable_registrations,
+    format_cancel_participants_prompt,
     format_registration_confirmation,
     format_participants_list,
     format_user_registrations,
@@ -179,16 +184,44 @@ async def cmd_my_registrations(event: MessageCreated):
 
 @router.message_created(Command("cancel_registration"))
 async def cmd_cancel_registration(event: MessageCreated):
-    """Отмена регистрации."""
-    db = get_db()
-    registrations = await db.get_user_registrations(event.from_user.user_id)
-    log_user_action(event.from_user, "cancel_registration_start", {"registrations_count": len(registrations)})
+    """Отмена регистрации: выбор турнира (админам — регистрации всех пользователей)."""
+    registrations = await get_cancellable_registrations(event.from_user.user_id)
+    log_user_action(event.from_user, "cancel_registration_start", {
+        "registrations_count": len(registrations),
+        "as_admin": is_admin(event.from_user.user_id),
+    })
     if not registrations:
         await event.message.answer("📭 Нет активных регистраций.")
         return
 
-    keyboard = await get_max_cancel_registration_keyboard(registrations)
-    await event.message.answer("Выберите регистрацию:", attachments=[keyboard])
+    keyboard = get_max_cancel_tournaments_keyboard(registrations)
+    await event.message.answer("🏆 Выберите турнир:", attachments=[keyboard])
+
+@router.message_callback(CancelTournamentPayload.filter())
+async def process_cancel_tournament(event: MessageCallback, payload: CancelTournamentPayload):
+    """Выбор турнира при отмене регистрации — показать участников."""
+    bot = get_max_bot()
+
+    registrations = await get_cancellable_registrations(event.from_user.user_id, payload.tournament_id)
+    if not registrations:
+        log_user_action(event.from_user, "cancel_registration_no_registrations", {
+            "tournament_id": payload.tournament_id
+        })
+        await event.answer("📭 Нет регистраций на этот турнир.")
+        return
+
+    log_user_action(event.from_user, "cancel_registration_tournament_selected", {
+        "tournament_id": payload.tournament_id,
+        "tournament_name": registrations[0]['tournament_name'],
+    })
+
+    keyboard = get_max_cancel_registration_keyboard(registrations)
+    await event.answer("✅ Турнир выбран!")
+    await bot.send_message(
+        chat_id=event.chat.chat_id,
+        text=format_cancel_participants_prompt(registrations),
+        attachments=[keyboard]
+    )
 
 @router.message_callback(CancelRegistrationPayload.filter())
 async def process_cancel_selection(event: MessageCallback, payload: CancelRegistrationPayload, context: MemoryContext):
@@ -224,10 +257,14 @@ async def process_cancel_confirm(event: MessageCallback, payload: CancelConfirmP
     bot = get_max_bot()
 
     tournament_id = await db.get_tournament_id_by_registration(payload.registration_id)
-    success = await db.cancel_registration(payload.registration_id, event.from_user.user_id)
+    admin = is_admin(event.from_user.user_id)
+    success = await db.cancel_registration(payload.registration_id, None if admin else event.from_user.user_id)
 
     if success:
-        log_user_action(event.from_user, "cancel_registration_success", {"registration_id": payload.registration_id})
+        log_user_action(event.from_user, "cancel_registration_success", {
+            "registration_id": payload.registration_id,
+            "as_admin": admin,
+        })
         await event.answer("✅ Отменено!")
         await bot.send_message(
             chat_id=event.chat.chat_id,

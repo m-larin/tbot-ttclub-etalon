@@ -4,9 +4,13 @@ from telebot.types import Message, CallbackQuery
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from keyboards.telegram import (
     get_tg_tournaments_keyboard,
+    get_tg_cancel_tournaments_keyboard,
     get_tg_cancel_registration_keyboard,
 )
 from handlers.common import (
+    is_admin,
+    get_cancellable_registrations,
+    format_cancel_participants_prompt,
     format_registration_confirmation,
     format_participants_list,
     format_user_registrations,
@@ -76,17 +80,50 @@ def register_handlers():  # pylint: disable=too-many-statements
 
     @bot.message_handler(commands=['cancel_registration'])
     async def cmd_cancel_registration(message: Message):
-        """Показать регистрации для отмены."""
-        registrations = await db.get_user_registrations(message.from_user.id)
-        log_user_action(message.from_user, "cancel_registration_start", {"registrations_count": len(registrations)})
+        """Показать турниры с регистрациями для отмены (админам — регистрации всех пользователей)."""
+        registrations = await get_cancellable_registrations(message.from_user.id)
+        log_user_action(message.from_user, "cancel_registration_start", {
+            "registrations_count": len(registrations),
+            "as_admin": is_admin(message.from_user.id),
+        })
         if not registrations:
             await bot.reply_to(message, "📭 Нет активных регистраций.")
             return
 
-        keyboard = await get_tg_cancel_registration_keyboard(registrations)
+        keyboard = get_tg_cancel_tournaments_keyboard(registrations)
         await bot.send_message(
             message.chat.id,
-            "Выберите регистрацию для отмены:",
+            "🏆 Выберите турнир:",
+            reply_markup=keyboard
+        )
+
+    @bot.callback_query_handler(func=lambda call: call.data and call.data.startswith('unreg_'))
+    async def process_cancel_tournament(call: CallbackQuery):
+        """Выбор турнира при отмене регистрации — показать участников."""
+        tournament_id = int(call.data.split('_')[1])
+        registrations = await get_cancellable_registrations(call.from_user.id, tournament_id)
+
+        if not registrations:
+            log_user_action(call.from_user, "cancel_registration_no_registrations", {"tournament_id": tournament_id})
+            await bot.answer_callback_query(call.id)
+            await bot.edit_message_text(
+                "📭 Нет регистраций на этот турнир.",
+                call.message.chat.id,
+                call.message.message_id
+            )
+            return
+
+        log_user_action(call.from_user, "cancel_registration_tournament_selected", {
+            "tournament_id": tournament_id,
+            "tournament_name": registrations[0]['tournament_name'],
+        })
+
+        keyboard = get_tg_cancel_registration_keyboard(registrations)
+        await bot.answer_callback_query(call.id)
+        await bot.edit_message_text(
+            format_cancel_participants_prompt(registrations),
+            call.message.chat.id,
+            call.message.message_id,
             reply_markup=keyboard
         )
 
@@ -204,7 +241,7 @@ def register_handlers():  # pylint: disable=too-many-statements
         call.data
         and call.data.startswith('cancel_')
         and not call.data.startswith('cancel_confirm_')
-        and call.data != 'cancel_all'
+        and call.data not in ('cancel_all', 'cancel_delete')
     ))
     async def process_cancel_selection(call: CallbackQuery):
         """Начало отмены регистрации."""
@@ -229,10 +266,14 @@ def register_handlers():  # pylint: disable=too-many-statements
         registration_id = int(call.data.split('_')[2])
         tournament_id = await db.get_tournament_id_by_registration(registration_id)
 
-        success = await db.cancel_registration(registration_id, call.from_user.id)
+        admin = is_admin(call.from_user.id)
+        success = await db.cancel_registration(registration_id, None if admin else call.from_user.id)
 
         if success:
-            log_user_action(call.from_user, "cancel_registration_success", {"registration_id": registration_id})
+            log_user_action(call.from_user, "cancel_registration_success", {
+                "registration_id": registration_id,
+                "as_admin": admin,
+            })
             await bot.answer_callback_query(call.id, "✅ Отменено!")
             await bot.edit_message_text(
                 "✅ Регистрация отменена.",

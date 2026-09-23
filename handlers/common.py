@@ -45,7 +45,10 @@ def build_welcome_message(first_name: str, user_id: int) -> str:
         "/help - справка"
     )
     if is_admin(user_id):
-        text += "\n\n🔑 Админ-команды:\n/add_tournament\n/delete_tournament"
+        text += (
+            "\n\n🔑 Админ-команды:\n/add_tournament\n/delete_tournament\n"
+            "/cancel_registration - можно отменить регистрацию любого пользователя"
+        )
     return text
 
 
@@ -61,7 +64,10 @@ def build_help_message(user_id: int) -> str:
         "/help - эта справка"
     )
     if is_admin(user_id):
-        text += "\n\nАдмин:\n/add_tournament\n/delete_tournament"
+        text += (
+            "\n\nАдмин:\n/add_tournament\n/delete_tournament\n"
+            "/cancel_registration - можно отменить регистрацию любого пользователя"
+        )
     return text
 
 
@@ -184,6 +190,16 @@ def format_user_registrations(registrations: list) -> str:
     return text
 
 
+def format_cancel_participants_prompt(registrations: list) -> str:
+    """Формирует текст выбора участника для отмены регистрации (все регистрации одного турнира)."""
+    date_obj = datetime.fromisoformat(registrations[0]['tournament_date'])
+    return (
+        f"🏆 {registrations[0]['tournament_name']}\n"
+        f"📅 {date_obj.strftime('%d.%m.%Y')}\n\n"
+        "Выберите участника для отмены регистрации:"
+    )
+
+
 def format_participants_update_text(tournament: dict, participants: list) -> str:
     """Формирует текст уведомления об обновлении списка участников турнира."""
     date_obj = datetime.fromisoformat(tournament['date'])
@@ -222,6 +238,13 @@ async def notify_group_from_tg(text: str, tg_username: str) -> None:
         keyboard_tg=tg_keyboard,
         keyboard_max=max_keyboard.as_markup(),
     )
+
+
+async def get_cancellable_registrations(user_id: int, tournament_id: Optional[int] = None) -> list:
+    """Регистрации, которые пользователь может отменить: админ — любые, остальные — только свои."""
+    db = get_db()
+    registered_by = None if is_admin(user_id) else user_id
+    return await db.get_registrations(registered_by=registered_by, tournament_id=tournament_id)
 
 
 async def get_tournament_or_notify(event, tournament_id: int) -> Optional[dict]:

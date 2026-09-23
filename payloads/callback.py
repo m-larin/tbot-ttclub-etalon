@@ -17,6 +17,10 @@ class TournamentDeleteConfirmPayload(CallbackPayload, prefix="delete_confirm"):
     """Подтверждение удаления турнира."""
     tournament_id: int
 
+class CancelTournamentPayload(CallbackPayload, prefix="unreg"):
+    """Выбор турнира для отмены регистрации."""
+    tournament_id: int
+
 class CancelRegistrationPayload(CallbackPayload, prefix="cancel"):
     """Выбор регистрации для отмены."""
     registration_id: int
