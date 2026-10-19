@@ -11,6 +11,7 @@ from handlers.common import (
     is_admin,
     get_cancellable_registrations,
     format_cancel_participants_prompt,
+    format_cancel_confirmation_prompt,
     format_registration_confirmation,
     format_participants_list,
     format_user_registrations,
@@ -246,6 +247,17 @@ def register_handlers():  # pylint: disable=too-many-statements
     async def process_cancel_selection(call: CallbackQuery):
         """Начало отмены регистрации."""
         registration_id = int(call.data.split('_')[1])
+        registration = await db.get_registration(registration_id)
+
+        if not registration:
+            log_user_action(call.from_user, "cancel_registration_not_found", {"registration_id": registration_id})
+            await bot.answer_callback_query(call.id)
+            await bot.edit_message_text(
+                "📭 Регистрация не найдена — возможно, она уже отменена.",
+                call.message.chat.id,
+                call.message.message_id
+            )
+            return
 
         keyboard = InlineKeyboardMarkup(row_width=2)
         yes_btn = InlineKeyboardButton("✅ Да", callback_data=f"cancel_confirm_{registration_id}")
@@ -253,7 +265,7 @@ def register_handlers():  # pylint: disable=too-many-statements
         keyboard.add(yes_btn, no_btn)
 
         await bot.edit_message_text(
-            "Вы уверены?",
+            format_cancel_confirmation_prompt(registration),
             call.message.chat.id,
             call.message.message_id,
             reply_markup=keyboard

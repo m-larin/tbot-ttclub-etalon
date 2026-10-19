@@ -200,6 +200,17 @@ def format_cancel_participants_prompt(registrations: list) -> str:
     )
 
 
+def format_cancel_confirmation_prompt(registration: dict) -> str:
+    """Формирует текст подтверждения отмены конкретной регистрации."""
+    date_obj = datetime.fromisoformat(registration['tournament_date'])
+    return (
+        "❓ Отменить регистрацию?\n\n"
+        f"🏆 {registration['tournament_name']}\n"
+        f"📅 {date_obj.strftime('%d.%m.%Y')}\n"
+        f"👤 {registration['full_name']} ({registration['city']})"
+    )
+
+
 def format_participants_update_text(tournament: dict, participants: list) -> str:
     """Формирует текст уведомления об обновлении списка участников турнира."""
     date_obj = datetime.fromisoformat(tournament['date'])

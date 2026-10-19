@@ -25,6 +25,7 @@ from handlers.common import (
     is_admin,
     get_cancellable_registrations,
     format_cancel_participants_prompt,
+    format_cancel_confirmation_prompt,
     format_registration_confirmation,
     format_participants_list,
     format_user_registrations,
@@ -227,6 +228,13 @@ async def process_cancel_tournament(event: MessageCallback, payload: CancelTourn
 async def process_cancel_selection(event: MessageCallback, payload: CancelRegistrationPayload, context: MemoryContext):
     """Начало отмены."""
     bot = get_max_bot()
+    db = get_db()
+
+    registration = await db.get_registration(payload.registration_id)
+    if not registration:
+        log_user_action(event.from_user, "cancel_registration_not_found", {"registration_id": payload.registration_id})
+        await event.answer("📭 Регистрация не найдена — возможно, она уже отменена.")
+        return
 
     await context.update_data(registration_id=payload.registration_id)
     await context.set_state(CancelStates.confirming)
@@ -246,7 +254,7 @@ async def process_cancel_selection(event: MessageCallback, payload: CancelRegist
     await event.answer("❓ Подтвердите отмену.")
     await bot.send_message(
         chat_id=event.chat.chat_id,
-        text="Вы уверены?",
+        text=format_cancel_confirmation_prompt(registration),
         attachments=[builder.as_markup()]
     )
 

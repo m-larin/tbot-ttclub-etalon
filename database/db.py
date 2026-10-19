@@ -29,8 +29,14 @@ class Database:
         self._lock = asyncio.Lock()
         logger.info("📁 Путь к БД: %s", self.db_name)
 
-    async def _execute(self, query: str, params: tuple = (), fetchone: bool = False, fetchall: bool = False):
-        """Асинхронная обертка для выполнения SQL-запросов с блокировкой."""
+    async def _execute(
+        self, query: str, params: tuple = (),
+        fetchone: bool = False, fetchall: bool = False, rowcount: bool = False
+    ):
+        """Асинхронная обертка для выполнения SQL-запросов с блокировкой.
+
+        rowcount=True — вернуть число затронутых строк (для INSERT/UPDATE/DELETE).
+        """
 
         async with self._lock:
             def _sync_execute():
@@ -50,6 +56,8 @@ class Database:
                         result = cursor.fetchone()
                     elif fetchall:
                         result = cursor.fetchall()
+                    elif rowcount:
+                        result = cursor.rowcount
                     else:
                         result = None
 
@@ -149,19 +157,19 @@ class Database:
             return False
 
     async def cancel_registration(self, registration_id: int, registered_by: Optional[int]) -> bool:
-        """Отмена регистрации (только свои; registered_by=None — любую, для админов)."""
+        """Отмена регистрации (только свои; registered_by=None — любую, для админов).
+
+        Возвращает True, только если запись действительно была удалена.
+        """
         try:
             if registered_by is None:
                 query = "DELETE FROM participants WHERE id = ?"
-                await self._execute(query, (registration_id,))
-                check_query = "SELECT COUNT(*) as cnt FROM participants WHERE id = ?"
-                row = await self._execute(check_query, (registration_id,), fetchone=True)
+                params = (registration_id,)
             else:
                 query = "DELETE FROM participants WHERE id = ? AND registered_by = ?"
-                await self._execute(query, (registration_id, registered_by))
-                check_query = "SELECT COUNT(*) as cnt FROM participants WHERE id = ? AND registered_by = ?"
-                row = await self._execute(check_query, (registration_id, registered_by), fetchone=True)
-            return row['cnt'] == 0 if row else False
+                params = (registration_id, registered_by)
+            deleted = await self._execute(query, params, rowcount=True)
+            return bool(deleted)
         except Exception as e:
             logger.error("❌ Ошибка отмены: %s", e)
             return False
@@ -202,6 +210,17 @@ class Database:
         query = "SELECT COUNT(*) as count FROM participants WHERE tournament_id = ?"
         row = await self._execute(query, (tournament_id,), fetchone=True)
         return row['count'] if row else 0
+
+    async def get_registration(self, registration_id: int) -> Optional[Dict[str, Any]]:
+        """Регистрация по ID вместе с названием и датой турнира."""
+        query = '''
+            SELECT p.*, t.name as tournament_name, t.date as tournament_date
+            FROM participants p
+            JOIN tournaments t ON p.tournament_id = t.id
+            WHERE p.id = ?
+        '''
+        row = await self._execute(query, (registration_id,), fetchone=True)
+        return dict(row) if row else None
 
     async def get_tournament_id_by_registration(self, registration_id: int) -> Optional[int]:
         """ID турнира по ID регистрации."""
